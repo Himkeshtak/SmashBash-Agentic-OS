@@ -16,3 +16,10 @@ htmlcov/
 
 # Temporary logs
 *.log
+
+# Private transaction state and dedicated device images
+.smashbash/
+data/
+*.egg-info/
+build/
+dist/
