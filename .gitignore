@@ -23,3 +23,8 @@ data/
 *.egg-info/
 build/
 dist/
+
+# Local credentials; only the blank configuration template is versioned.
+.env
+.env.*
+!.env.example

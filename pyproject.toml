@@ -11,6 +11,7 @@ dependencies = []
 
 [project.scripts]
 smashbash = "smashbash.cli:main"
+smashbash-agent = "smashbash.agent:main"
 
 [tool.setuptools.packages.find]
 include = ["smashbash*"]

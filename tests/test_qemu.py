@@ -125,3 +125,13 @@ class QEMUIntegrationTests(unittest.TestCase):
         self.assertEqual(result["state"], "ABORTED", result)
         self.assertIn("xv6 validator rejected", result["reason"])
         self.assertEqual(self.target.path.read_bytes(), baseline)
+
+    def test_llm_agent_proposal_passes_through_the_real_qemu_coordinator(self):
+        from smashbash.agent import Agent
+        from tests.test_agent import FakeLLM
+        llm = FakeLLM()  # Inference is a test double; xv6 execution is real.
+        agent = Agent(llm, lambda: self.policy, principal="local-user", coordinator=self.coordinator)
+        result = agent.run("Write hello to note.txt", mode="commit", request_id="agent-integration")
+        self.assertEqual(result["state"], "COMMITTED", result)
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(Image(self.target.path).tree("/data")["note.txt"].data, b"hello")

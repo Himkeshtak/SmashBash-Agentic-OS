@@ -11,6 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from .agent import add_arguments as add_agent_arguments, run_cli as run_agent_cli
 from .bridge import QEMUBridge, QEMUConfig
 from .coordinator import Coordinator
 from .filesystem import validate_tree
@@ -52,6 +53,8 @@ def parser():
     sub = result.add_subparsers(dest="command", required=True)
     build = sub.add_parser("build", help="compile the trusted xv6 template on Linux/WSL")
     build.add_argument("--xv6", type=Path, default=Path("xv6"))
+    agent = sub.add_parser("agent", help="plan a natural-language task with an LLM and submit it to xv6")
+    add_agent_arguments(agent)
     for command in ("init", "run", "inspect", "recover"):
         cmd = sub.add_parser(command)
         cmd.add_argument("--image", type=Path, required=True)
@@ -70,6 +73,8 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "agent":
+            return run_agent_cli(args)
         if args.command == "build":
             subprocess.run(["make", "-C", str(args.xv6), "kernel/kernel", "fs.img"], check=True)
             return 0

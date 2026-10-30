@@ -4,7 +4,10 @@ The OS consumes a versioned operation protocol and knows nothing about an agent'
 
 ```mermaid
 flowchart TD
-    A["Any agent / LLM / client"] --> J["JSON request v1<br/>intent + typed operations"]
+    U["User task"] --> IV["Principal + intent precheck"]
+    IV --> LA["Agent.py / Agent class<br/>OpenRouter or local Ollama inference"]
+    LA --> J["JSON request v1<br/>intent + typed operations"]
+    A["Any other agent / client"] --> J
     I["Authenticated principal<br/>supplied by trusted integration"] --> V1
     P["Trusted policy + optional scanners"] --> V1
     J --> V1["Admission validator<br/>schema, permissions, scope,<br/>threat indicators, budgets"]
@@ -67,7 +70,7 @@ The filesystem log commits operations to the private disk during a trial. That i
 
 ## Agent and persistence independence
 
-The Python `Coordinator.run` method is the common entrypoint. CLI, LLM tools, queues, or a future authenticated server can call it. There is deliberately no unauthenticated network listener and no OpenAI-specific planner in the execution path.
+The Python `Coordinator.run` method is the common entrypoint. The included LLM-backed `Agent` invokes OpenRouter or local Ollama to propose a batch and submits it to that same method. Other CLI clients, LLM tools, queues, or a future authenticated server can also call it. There is deliberately no unauthenticated network listener or provider dependency in the OS execution path. See [the real agent setup](agent.md).
 
 `StorageTarget` separates trial execution from native persistence. Its snapshot must yield a bootable private xv6 view. Its prospective revision must identify the proposed native result. Its publication method must enforce the baseline and atomically persist that result. Only `ImageTarget` ships here. Directory and database adapters must provide equivalent isolation, mapping, atomicity, and crash recovery before they can be enabled.
 

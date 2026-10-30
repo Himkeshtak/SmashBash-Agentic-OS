@@ -88,18 +88,22 @@ class Policy:
         fingerprint = hashlib.sha256(json.dumps(raw, sort_keys=True).encode()).hexdigest()
         return cls(grants, protected, tuple(patterns), guest_root=root, fingerprint=fingerprint, **limits)
 
-    def admit(self, request: Request, principal: str) -> None:
+    def admit_intent(self, intent: str, principal: str) -> None:
         if not isinstance(principal, str):
             raise TransactionError("authenticated principal must be a string")
         grant = self.grants.get(principal)
         if grant is None:
             raise TransactionError("principal has no access grant")
+        if any(re.search(p, intent, re.IGNORECASE) for p in self.denied_intent_patterns):
+            raise TransactionError("intent rejected by a configured threat indicator")
+
+    def admit(self, request: Request, principal: str) -> None:
+        self.admit_intent(request.intent, principal)
+        grant = self.grants[principal]
         if len(request.operations) > self.max_operations:
             raise TransactionError("operation budget exceeded")
         if sum(len(op.content) for op in request.operations) > self.max_total_bytes:
             raise TransactionError("request byte budget exceeded")
-        if any(re.search(p, request.intent, re.IGNORECASE) for p in self.denied_intent_patterns):
-            raise TransactionError("intent rejected by a configured threat indicator")
         for op in request.operations:
             if op.op not in grant.operations:
                 raise TransactionError(f"operation is not permitted: {op.op}")

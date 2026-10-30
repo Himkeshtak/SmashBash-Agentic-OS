@@ -26,6 +26,40 @@ Each `request_id` is used once per target. Repeating an identical request return
 
 The sample policy grants `local-user` access to supported operations outside `secrets`, and grants `reader` read/stat access under `public`. A directory listing that overlaps a protected subtree is denied. Replace these example grants with your actual permissions before integrating an agent.
 
+## Use the real LLM agent
+
+`Agent.py` starts the LLM-backed `Agent` class in `smashbash/agent.py`. The actual provider HTTP invocation is in `smashbash/llm.py`. This is separate from the agent-neutral OS coordinator.
+
+The workspace has an ignored `.env` with a blank key. For a new clone, copy `.env.example` to `.env` if it does not already exist, then add your own OpenRouter API key locally:
+
+```dotenv
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=your-own-key-goes-here
+LLM_MODEL=openrouter/free
+LLM_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_FREE_ONLY=true
+```
+
+Create a key in your own [OpenRouter account](https://openrouter.ai/settings/keys). The [free router](https://openrouter.ai/collections/free-models) selects available free models; free usage is rate limited. Free-only mode rejects paid model IDs and the client supplies no paid fallback list. No third-party keys are bundled or obtained from public repositories.
+
+```sh
+# Invoke the LLM and validate the returned plan, without starting a VM.
+python3 Agent.py --task "Write hello to note.txt" --plan-only
+
+# Run the proposed batch in QEMU, validate it, and discard the trial.
+python3 Agent.py --task "Write hello to note.txt" --mode preview
+
+# Run and publish only if the full OS transaction pipeline accepts it.
+python3 Agent.py --task "Write hello to note.txt" --mode commit
+
+# Equivalent package entrypoint; omit --task for an interactive prompt.
+python3 -m smashbash agent --task "Read note.txt" --mode commit
+```
+
+Preview is the default. Run QEMU commands in Linux/WSL after initializing the image above. Planning alone also works on Windows. A valid LLM plan is still untrusted: permissions, paths, schemas, budgets, guest validators, and the host commit gate all remain in force. The LLM cannot choose identity, targets, policy, or commit mode.
+
+For an installed local Ollama model, change `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_BASE_URL` to `ollama`, your model's installed name, and `http://127.0.0.1:11434/v1`. Local inference needs no API key and receives no OpenRouter authorization header. See [agent setup and limits](docs/agent.md).
+
 ## Agent integration
 
 Agents provide JSON through stdin, a request file, or the Python API. They never choose the trusted principal, target image, kernel, permissions, or validator plugins inside the request.
@@ -100,5 +134,7 @@ This implementation isolates whole trial VMs. It does not implement the earlier 
 | `config/`, `schema/`, `examples/` | Trusted policy example and agent-facing protocol |
 | `tests/` | Portable checks, fault injection, and opt-in real VM integration |
 | `agent/` | Compatibility entrypoint and imports; no mock dispatcher |
+| `Agent.py`, `smashbash/agent.py`, `smashbash/llm.py` | Real task-to-operations LLM agent and provider client |
+| `.env.example` | Blank, shareable configuration; actual `.env` is ignored |
 
 The xv6 code retains its upstream license in `xv6/LICENSE`.
