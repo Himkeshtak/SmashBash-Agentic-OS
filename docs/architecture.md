@@ -5,33 +5,52 @@ The OS consumes a versioned operation protocol and knows nothing about an agent'
 ```mermaid
 flowchart TD
     U["User task"] --> IV["Principal + intent precheck"]
+    I["Authenticated principal<br/>supplied by trusted integration"] --> IV
+    P["Trusted policy + optional scanners"] --> IV
+    CFG["Trusted runtime configuration<br/>local .env or environment"] --> LA
+    CFG --> TX
+    IV -->|reject| AB["ABORT / reject<br/>No live effects"]
     IV --> LA["Agent.py / Agent class<br/>OpenRouter or local Ollama inference"]
+    LA -->|inference or proposal failure| AB
     LA --> J["JSON request v1<br/>intent + typed operations"]
     A["Any other agent / client"] --> J
-    I["Authenticated principal<br/>supplied by trusted integration"] --> V1
-    P["Trusted policy + optional scanners"] --> V1
+    I --> V1
+    P --> V1
     J --> V1["Admission validator<br/>schema, permissions, scope,<br/>threat indicators, budgets"]
-    V1 -->|reject| AB["ABORT / reject<br/>No live effects"]
+    V1 -->|reject| AB
     V1 -->|admit| TX["Coordinator<br/>lock target + baseline revision"]
     D[("Dedicated persistent xv6 disk")] -->|copy only| SH[("Private shadow image")]
     TX --> SH
-    SH --> B["QEMU bridge<br/>SB1 frames; no agent shell commands"]
+    SH --> EXPECT["Independent expected-state evaluation<br/>check batch semantics and quotas"]
+    EXPECT -->|invalid| AB
+    EXPECT --> B["QEMU bridge<br/>SB1 frames; no agent shell commands"]
     B --> E["xv6 shadowd<br/>confined filesystem operations"]
+    E -->|operation failure or timeout| AB
     E --> G["OS final validator<br/>tree quotas, types, links,<br/>operation completion"]
     G --> K["Kernel shadowcheck syscall<br/>block ownership, bitmap,<br/>inode bounds, clean log"]
     G -->|invalid| AB
     K -->|invalid| AB
     K -->|PREPARED| F["Stop VM + independent host inspection<br/>directory graph, exact effects,<br/>unchanged system namespace"]
+    F -->|invalid or unclean shutdown| AB
     F --> C["Commit gate<br/>recheck policy + target revision<br/>optional application invariants"]
     C -->|invalid / conflict / preview| AB
     C -->|accepted| INT["Durable COMMITTING intent"]
     INT --> PUB["ImageTarget<br/>fsync temporary image<br/>atomic replacement + directory fsync"]
     PUB --> D
     PUB --> OK["COMMITTED receipt<br/>release read observations"]
-    TX --> AUD[("Private transaction journal")]
+    TX --> AUD[("Private transaction journal<br/>accepted request IDs and outcomes")]
     AB --> AUD
     INT --> AUD
     OK --> AUD
+    AUD -. interrupted transaction .-> REC["Recovery<br/>resolve pending journal state"]
+    REC -->|interrupted before publication| RAB["Recovered ABORTED<br/>discard trial"]
+    REC -->|COMMITTING| REV{"Current target revision?"}
+    REV -->|proposed revision and durability confirmed| ROK["Recovered COMMITTED receipt"]
+    REV -->|original baseline| RAB
+    REV -->|unrelated revision or durability unconfirmed| UNC["INDETERMINATE<br/>block further publication"]
+    ROK --> AUD
+    RAB --> AUD
+    UNC --> AUD
 ```
 
 ## Validation criteria
@@ -55,12 +74,13 @@ stateDiagram-v2
     EXECUTING --> PREPARED: both final validation boundaries pass
     PREPARED --> COMMITTING: commit mode and durable intent
     COMMITTING --> COMMITTED: atomic publication
+    COMMITTING --> COMMITTED: recovery confirms proposed revision and durability
     RECEIVED --> ABORTED: denied
     ADMITTED --> ABORTED: snapshot / semantic failure
     EXECUTING --> ABORTED: guest / validation failure
     PREPARED --> ABORTED: preview / conflict
     COMMITTING --> ABORTED: recovery finds original revision
-    COMMITTING --> INDETERMINATE: recovery finds an unrelated revision
+    COMMITTING --> INDETERMINATE: unrelated revision or durability unconfirmed
     COMMITTED --> [*]
     ABORTED --> [*]
     INDETERMINATE --> [*]

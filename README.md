@@ -6,6 +6,85 @@ An agent-independent transaction layer for xv6. An agent submits structured file
 
 [Architecture and final validator criteria](docs/architecture.md) · [Agent protocol](docs/protocol.md) · [Security and recovery contract](docs/security.md) · [Request JSON Schema](schema/request.schema.json)
 
+## Architecture
+
+The complete implemented flow is shown below: the LLM-backed agent and other clients share the same validated OS protocol. Trials run on private xv6 disks, and publication requires both guest and host validation. Recovery resolves interrupted transactions from the journal.
+
+```mermaid
+flowchart TD
+    U["User task"] --> IV["Principal + intent precheck"]
+    I["Authenticated principal<br/>supplied by trusted integration"] --> IV
+    P["Trusted policy + optional scanners"] --> IV
+    CFG["Trusted runtime configuration<br/>local .env or environment"] --> LA
+    CFG --> TX
+    IV -->|reject| AB["ABORT / reject<br/>No live effects"]
+    IV --> LA["Agent.py / Agent class<br/>OpenRouter or local Ollama inference"]
+    LA -->|inference or proposal failure| AB
+    LA --> J["JSON request v1<br/>intent + typed operations"]
+    A["Any other agent / client"] --> J
+    I --> V1
+    P --> V1
+    J --> V1["Admission validator<br/>schema, permissions, scope,<br/>threat indicators, budgets"]
+    V1 -->|reject| AB
+    V1 -->|admit| TX["Coordinator<br/>lock target + baseline revision"]
+    D[("Dedicated persistent xv6 disk")] -->|copy only| SH[("Private shadow image")]
+    TX --> SH
+    SH --> EXPECT["Independent expected-state evaluation<br/>check batch semantics and quotas"]
+    EXPECT -->|invalid| AB
+    EXPECT --> B["QEMU bridge<br/>SB1 frames; no agent shell commands"]
+    B --> E["xv6 shadowd<br/>confined filesystem operations"]
+    E -->|operation failure or timeout| AB
+    E --> G["OS final validator<br/>tree quotas, types, links,<br/>operation completion"]
+    G --> K["Kernel shadowcheck syscall<br/>block ownership, bitmap,<br/>inode bounds, clean log"]
+    G -->|invalid| AB
+    K -->|invalid| AB
+    K -->|PREPARED| F["Stop VM + independent host inspection<br/>directory graph, exact effects,<br/>unchanged system namespace"]
+    F -->|invalid or unclean shutdown| AB
+    F --> C["Commit gate<br/>recheck policy + target revision<br/>optional application invariants"]
+    C -->|invalid / conflict / preview| AB
+    C -->|accepted| INT["Durable COMMITTING intent"]
+    INT --> PUB["ImageTarget<br/>fsync temporary image<br/>atomic replacement + directory fsync"]
+    PUB --> D
+    PUB --> OK["COMMITTED receipt<br/>release read observations"]
+    TX --> AUD[("Private transaction journal<br/>accepted request IDs and outcomes")]
+    AB --> AUD
+    INT --> AUD
+    OK --> AUD
+    AUD -. interrupted transaction .-> REC["Recovery<br/>resolve pending journal state"]
+    REC -->|interrupted before publication| RAB["Recovered ABORTED<br/>discard trial"]
+    REC -->|COMMITTING| REV{"Current target revision?"}
+    REV -->|proposed revision and durability confirmed| ROK["Recovered COMMITTED receipt"]
+    REV -->|original baseline| RAB
+    REV -->|unrelated revision or durability unconfirmed| UNC["INDETERMINATE<br/>block further publication"]
+    ROK --> AUD
+    RAB --> AUD
+    UNC --> AUD
+```
+
+### Transaction lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> RECEIVED
+    RECEIVED --> ADMITTED: permissions and policy pass
+    ADMITTED --> EXECUTING: stable private snapshot
+    EXECUTING --> PREPARED: both final validation boundaries pass
+    PREPARED --> COMMITTING: commit mode and durable intent
+    COMMITTING --> COMMITTED: atomic publication
+    COMMITTING --> COMMITTED: recovery confirms proposed revision and durability
+    RECEIVED --> ABORTED: denied
+    ADMITTED --> ABORTED: snapshot / semantic failure
+    EXECUTING --> ABORTED: guest / validation failure
+    PREPARED --> ABORTED: preview / conflict
+    COMMITTING --> ABORTED: recovery finds original revision
+    COMMITTING --> INDETERMINATE: unrelated revision or durability unconfirmed
+    COMMITTED --> [*]
+    ABORTED --> [*]
+    INDETERMINATE --> [*]
+```
+
+The persistent target is an xv6 filesystem image. Host-filesystem and database adapters remain unimplemented. See [validation criteria](docs/architecture.md#validation-criteria) and the [security contract](docs/security.md) for the exact guarantees.
+
 ## Build and run
 
 The host package uses Python 3.10+ and the standard library. Build and run QEMU on Linux or WSL. On Ubuntu:
