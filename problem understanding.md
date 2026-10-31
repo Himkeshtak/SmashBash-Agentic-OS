@@ -1,5 +1,7 @@
 # Problem Understanding: Smash Bash
 
+> Historical process-level proposal. The implemented agent-independent whole-VM transaction design is documented in [docs/architecture.md](docs/architecture.md). The `xbegin/xcommit/xabort` interfaces below remain a proposal and are not implemented by this repository.
+
 ## 1. What are we building?
 
 We are extending the supplied xv6-riscv operating system so a process and its children can perform a private trial of file changes and output, then either keep those effects or discard them.

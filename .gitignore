@@ -16,3 +16,15 @@ htmlcov/
 
 # Temporary logs
 *.log
+
+# Private transaction state and dedicated device images
+.smashbash/
+data/
+*.egg-info/
+build/
+dist/
+
+# Local credentials; only the blank configuration template is versioned.
+.env
+.env.*
+!.env.example

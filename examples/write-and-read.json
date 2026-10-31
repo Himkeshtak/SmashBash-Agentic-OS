@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "request_id": "example-write-001",
+  "intent": "Create a project note and verify its contents in the shadow environment",
+  "mode": "commit",
+  "operations": [
+    {"op": "fs.write", "path": "note.txt", "content_b64": "SGVsbG8gZnJvbSB0aGUgc2hhZG93Lgo="},
+    {"op": "fs.read", "path": "note.txt"}
+  ]
+}

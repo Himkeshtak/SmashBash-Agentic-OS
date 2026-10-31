@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:smashbash:request:v1",
+  "title": "SmashBash transaction request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "request_id", "intent", "mode", "operations"],
+  "properties": {
+    "version": {"const": 1, "type": "integer"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"},
+    "intent": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[^\\x00-\\x1f]*$"},
+    "mode": {"enum": ["commit", "preview"]},
+    "operations": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/operation"}}
+  },
+  "$defs": {
+    "path": {"type": "string", "maxLength": 96, "pattern": "^(?!.*(?:^|/)(?:\\.|\\.\\.)(?:/|$))[A-Za-z0-9_.-]{1,14}(?:/[A-Za-z0-9_.-]{1,14}){0,7}$"},
+    "observationPath": {"oneOf": [{"const": "."}, {"$ref": "#/$defs/path"}]},
+    "operation": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["op", "path"], "properties": {"op": {"enum": ["fs.read", "fs.mkdir", "fs.remove"]}, "path": {"$ref": "#/$defs/path"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "path"], "properties": {"op": {"enum": ["fs.list", "fs.stat"]}, "path": {"$ref": "#/$defs/observationPath"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "path", "content_b64"], "properties": {"op": {"enum": ["fs.write", "fs.append"]}, "path": {"$ref": "#/$defs/path"}, "content_b64": {"type": "string", "maxLength": 87384, "contentEncoding": "base64"}}},
+        {"type": "object", "additionalProperties": false, "required": ["op", "path", "destination"], "properties": {"op": {"const": "fs.rename"}, "path": {"$ref": "#/$defs/path"}, "destination": {"$ref": "#/$defs/path"}}}
+      ]
+    }
+  }
+}

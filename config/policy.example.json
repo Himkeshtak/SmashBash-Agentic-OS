@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "guest_root": "/data",
+  "principals": {
+    "local-user": {
+      "operations": ["fs.read", "fs.list", "fs.stat", "fs.write", "fs.append", "fs.mkdir", "fs.remove", "fs.rename"],
+      "path_prefixes": ["."]
+    },
+    "reader": {
+      "operations": ["fs.read", "fs.stat"],
+      "path_prefixes": ["public"]
+    }
+  },
+  "protected_paths": ["secrets"],
+  "denied_intent_patterns": ["\\b(disable|bypass)\\s+(the\\s+)?(validator|audit|permission)\\b"],
+  "limits": {
+    "max_operations": 16,
+    "max_entries": 100,
+    "max_file_bytes": 32768,
+    "max_total_bytes": 131072,
+    "timeout_seconds": 30
+  }
+}

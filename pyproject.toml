@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smashbash"
+version = "0.1.0"
+description = "Agent-independent, validated xv6 shadow transactions"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+smashbash = "smashbash.cli:main"
+smashbash-agent = "smashbash.agent:main"
+
+[tool.setuptools.packages.find]
+include = ["smashbash*"]

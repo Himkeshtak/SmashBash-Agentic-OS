@@ -21,6 +21,7 @@ OBJS = \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
+  $K/shadow.o \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
@@ -61,7 +62,7 @@ OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
 # Deterministic builds.
-DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
+DETFLAGS = -ffile-prefix-map="$(CURDIR)"=.
 
 CFLAGS = -Wall -Werror -Wno-unknown-attributes -O -fno-omit-frame-pointer -ggdb -gdwarf-2
 CFLAGS += $(DETFLAGS)
@@ -151,6 +152,7 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_sync\
+	$U/_shadowd\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)
