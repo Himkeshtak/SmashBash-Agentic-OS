@@ -38,6 +38,7 @@ binit(void)
   struct buf *b;
 
   initlock(&bcache.lock, "bcache");
+  specinit();
 
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;
@@ -55,7 +56,7 @@ binit(void)
 // If not found, allocate a buffer.
 // In either case, return locked buffer.
 static struct buf *
-bget(uint dev, uint blockno)
+bget(uint dev, uint blockno, int view)
 {
   struct buf *b;
 
@@ -63,7 +64,7 @@ bget(uint dev, uint blockno)
 
   // Is the block already cached?
   for (b = bcache.head.next; b != &bcache.head; b = b->next) {
-    if (b->dev == dev && b->blockno == blockno) {
+    if (b->dev == dev && b->blockno == blockno && b->spec == view) {
       b->refcnt++;
       release(&bcache.lock);
       acquiresleep(&b->lock);
@@ -77,6 +78,7 @@ bget(uint dev, uint blockno)
     if (b->refcnt == 0) {
       b->dev = dev;
       b->blockno = blockno;
+      b->spec = view;
       b->valid = 0;
       b->refcnt = 1;
       release(&bcache.lock);
@@ -93,12 +95,42 @@ bread(uint dev, uint blockno)
 {
   struct buf *b;
 
-  b = bget(dev, blockno);
+  b = bget(dev, blockno, specid());
+  if (!b->valid) {
+    if (b->spec)
+      spec_load(b);
+    else {
+      virtio_disk_rw(b, 0);
+      b->valid = 1;
+    }
+  }
+  return b;
+}
+
+struct buf *
+bread_committed(uint dev, uint blockno)
+{
+  struct buf *b = bget(dev, blockno, 0);
   if (!b->valid) {
     virtio_disk_rw(b, 0);
     b->valid = 1;
   }
   return b;
+}
+
+void
+binvalidate(int view)
+{
+  acquire(&bcache.lock);
+  for (struct buf *b = bcache.buf; b < bcache.buf + NBUF; b++) {
+    if (b->spec == view) {
+      if (b->refcnt)
+        panic("live private buffer at finalization");
+      b->spec = -1;
+      b->valid = 0;
+    }
+  }
+  release(&bcache.lock);
 }
 
 // Write b's contents to disk.  Must be locked.
@@ -108,6 +140,8 @@ bwrite(struct buf *b)
 {
   if (!holdingsleep(&b->lock))
     panic("bwrite");
+  if (b->spec)
+    panic("private buffer reached disk write");
   virtio_disk_rw(b, 1);
 }
 

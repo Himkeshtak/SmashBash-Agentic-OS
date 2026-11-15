@@ -13,6 +13,8 @@ struct superblock;
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
+struct buf*     bread_committed(uint, uint);
+void            binvalidate(int);
 void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
@@ -55,6 +57,8 @@ void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, int, uint64, uint, uint);
 void            itrunc(struct inode*);
 void            ireclaim(int);
+struct inode*   igetview(uint, uint, int);
+void            iinvalidate(void);
 
 // kalloc.c
 void*           kalloc(void);
@@ -66,6 +70,42 @@ void            initlog(int, struct superblock*);
 void            log_write(struct buf*);
 void            begin_op(void);
 void            end_op(void);
+int             log_begin_spec(int);
+
+// spec.c: all filesystem/cache mutations are serialized by the publication gate.
+void            specinit(void);
+int             specid(void);
+void            spec_fsenter(void);
+void            spec_fsexit(void);
+int             spec_sysenter(int);
+void            spec_sysleave(int);
+int             spec_failed(void);
+void            spec_fail(void);
+void            spec_load(struct buf*);
+void            spec_store(struct buf*);
+void            spec_modified(uint);
+int             spec_begin(void);
+int             spec_commit(void);
+int             spec_abort(void);
+void            spec_fork(struct proc*);
+void            spec_exit(void);
+void            spec_killmembers(int, int);
+void            spec_wakemembers(int);
+int             spec_query(int);
+int             spec_samegroup(int, int);
+int             shadow_validate(void);
+int             inode_referenced(uint, uint);
+int             spec_dirtycount(int);
+int             spec_index(int);
+int             spec_track_pipe(struct pipe*);
+int             spec_output(struct pipe*, int, uint64, int);
+void            pipefdchange(struct file*, int, int);
+void            pipebackup(struct file*, int, int);
+void            pipepending(struct pipe*, int);
+void            pipehold(struct pipe*);
+void            pipeunhold(struct pipe*);
+void            pipespecfinish(struct pipe*, int, int);
+int             pipewrite_kernel(struct pipe*, char*, int);
 
 // pipe.c
 int             pipealloc(struct file**, struct file**);

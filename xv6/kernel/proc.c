@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct cpu cpus[NCPU];
 
@@ -124,6 +127,10 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->spec = p->fsgate = p->spec_ready = 0;
+  p->specio = -1;
+  p->savedcwd = 0;
+  memset(p->savedfile, 0, sizeof(p->savedfile));
 
   // Allocate a trapframe page.
   if ((p->trapframe = (struct trapframe *)kalloc()) == 0) {
@@ -283,15 +290,21 @@ kfork(void)
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
-    if (p->ofile[i])
+    if (p->ofile[i]) {
       np->ofile[i] = filedup(p->ofile[i]);
+    }
   np->cwd = idup(p->cwd);
+  spec_fork(np);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
 
   release(&np->lock);
+
+  // Endpoint accounting can take a pipe lock; never nest it under proc locks.
+  for (i = 0; i < NOFILE; i++)
+    pipefdchange(np->ofile[i], np->spec, 1);
 
   acquire(&wait_lock);
   np->parent = p;
@@ -330,10 +343,15 @@ kexit(int status)
   if (p == initproc)
     panic("init exiting");
 
+  spec_fsenter();
+  if (p->savedcwd)
+    spec_abort(); // Owner death cancels children before ordinary exit cleanup.
+
   // Close all open files.
   for (int fd = 0; fd < NOFILE; fd++) {
     if (p->ofile[fd]) {
       struct file *f = p->ofile[fd];
+      pipefdchange(f, p->spec, -1);
       fileclose(f);
       p->ofile[fd] = 0;
     }
@@ -343,6 +361,8 @@ kexit(int status)
   iput(p->cwd);
   end_op();
   p->cwd = 0;
+  spec_exit();
+  spec_fsexit();
 
   acquire(&wait_lock);
 
@@ -362,6 +382,57 @@ kexit(int status)
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
+}
+
+void
+spec_killmembers(int id, int except)
+{
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->spec == id && p->pid != except) {
+      p->killed = 1;
+      if (p->state == SLEEPING)
+        p->state = RUNNABLE;
+    }
+    release(&p->lock);
+  }
+}
+
+int
+spec_samegroup(int pid, int id)
+{
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    int same = p->pid == pid && p->state != UNUSED && p->spec == id;
+    release(&p->lock);
+    if (same) return 1;
+  }
+  return 0;
+}
+
+void
+spec_wakemembers(int id)
+{
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    if (p == myproc()) continue;
+    acquire(&p->lock);
+    if (p->spec == id && p->state == SLEEPING)
+      p->state = RUNNABLE;
+    release(&p->lock);
+  }
+}
+
+int
+spec_query(int pid)
+{
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    int id = p->pid == pid ? p->spec : 0;
+    release(&p->lock);
+    if (id)
+      return spec_dirtycount(id);
+  }
+  return -1;
 }
 
 // Wait for a child process to exit and return its pid.

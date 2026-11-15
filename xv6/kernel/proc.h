@@ -101,4 +101,10 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int spec;                   // Shared speculation ID; zero is committed view.
+  int specio;                 // -1 normally; explicit committed view during publication.
+  int fsgate;
+  int spec_ready;
+  struct file *savedfile[NOFILE];
+  struct inode *savedcwd;
 };

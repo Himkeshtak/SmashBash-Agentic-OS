@@ -164,7 +164,7 @@ filewrite(struct file *f, uint64 addr, int n)
       iunlock(f->ip);
       end_op();
 
-      if (r != n1) {
+      if (r != n1 || spec_failed()) {
         // error from writei
         break;
       }

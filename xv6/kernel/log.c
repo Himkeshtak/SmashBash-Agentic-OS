@@ -44,6 +44,7 @@ struct log {
   int committing;  // in commit(), please wait.
   int dev;
   int ncommit;
+  int capacity;
   struct logheader lh;
 };
 struct log log;
@@ -59,6 +60,7 @@ initlog(int dev, struct superblock *sb)
 
   initlock(&log.lock, "log");
   log.start = sb->logstart;
+  log.capacity = sb->nlog - 1 < LOGBLOCKS ? sb->nlog - 1 : LOGBLOCKS;
   log.dev = dev;
   recover_from_log();
 }
@@ -92,7 +94,11 @@ read_head(void)
   struct logheader *lh = (struct logheader *)(buf->data);
   int i;
   log.lh.n = lh->n;
+  if (log.lh.n < 0 || log.lh.n > log.capacity)
+    panic("invalid log header");
   for (i = 0; i < log.lh.n; i++) {
+    if (lh->block[i] < log.start + log.capacity + 1 || lh->block[i] >= FSSIZE)
+      panic("invalid log destination");
     log.lh.block[i] = lh->block[i];
   }
   brelse(buf);
@@ -128,6 +134,8 @@ recover_from_log(void)
 void
 begin_op(void)
 {
+  if (specid())
+    return;
   acquire(&log.lock);
   while (1) {
     if (log.committing) {
@@ -135,7 +143,7 @@ begin_op(void)
       release(&log.lock);
       sleep();
       acquire(&log.lock);
-    } else if (log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS > LOGBLOCKS) {
+    } else if (log.lh.n + (log.outstanding + 1) * MAXOPBLOCKS > log.capacity) {
       // this op might exhaust log space; wait for commit.
       sleep_prepare(&log);
       release(&log.lock);
@@ -154,6 +162,8 @@ begin_op(void)
 void
 end_op(void)
 {
+  if (specid())
+    return;
   int do_commit = 0;
 
   acquire(&log.lock);
@@ -225,9 +235,13 @@ log_write(struct buf *b)
 {
   int i;
 
+  if (b->spec) {
+    spec_store(b);
+    return;
+  }
+  spec_modified(b->blockno);
+
   acquire(&log.lock);
-  if (log.lh.n >= LOGBLOCKS)
-    panic("too big a transaction");
   if (log.outstanding < 1)
     panic("log_write outside of trans");
 
@@ -235,12 +249,27 @@ log_write(struct buf *b)
     if (log.lh.block[i] == b->blockno) // log absorption
       break;
   }
+  if (i == log.lh.n && log.lh.n >= log.capacity)
+    panic("too big a transaction");
   log.lh.block[i] = b->blockno;
   if (i == log.lh.n) { // Add new block to log?
     bpin(b);
     log.lh.n++;
   }
   release(&log.lock);
+}
+
+int
+log_begin_spec(int count)
+{
+  acquire(&log.lock);
+  if (count > log.capacity || log.outstanding || log.committing || log.lh.n) {
+    release(&log.lock);
+    return -1;
+  }
+  log.outstanding = 1;
+  release(&log.lock);
+  return 0;
 }
 
 uint64

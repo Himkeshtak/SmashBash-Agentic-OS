@@ -7,6 +7,11 @@
 #include "proc.h"
 #include "vm.h"
 
+uint64 sys_xbegin(void) { return spec_begin(); }
+uint64 sys_xcommit(void) { return spec_commit(); }
+uint64 sys_xabort(void) { return spec_abort(); }
+uint64 sys_xstate(void) { int pid; argint(0, &pid); return spec_query(pid); }
+
 uint64
 sys_exit(void)
 {

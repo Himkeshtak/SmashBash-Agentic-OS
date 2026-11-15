@@ -3,6 +3,7 @@ struct buf {
   int disk;  // does disk "own" buf?
   uint dev;
   uint blockno;
+  int spec; // Cache identity includes the filesystem view.
   struct sleeplock lock;
   uint refcnt;
   struct buf *prev; // LRU cache list

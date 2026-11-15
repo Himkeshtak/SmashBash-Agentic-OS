@@ -62,6 +62,7 @@ sys_dup(void)
   if ((fd = fdalloc(f)) < 0)
     return -1;
   filedup(f);
+  pipefdchange(f, myproc()->spec, 1);
   return fd;
 }
 
@@ -103,6 +104,7 @@ sys_close(void)
   if (argfd(0, &fd, &f) < 0)
     return -1;
   myproc()->ofile[fd] = 0;
+  pipefdchange(f, myproc()->spec, -1);
   fileclose(f);
   return 0;
 }
@@ -526,5 +528,7 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  pipefdchange(rf, p->spec, 1);
+  pipefdchange(wf, p->spec, 1);
   return 0;
 }

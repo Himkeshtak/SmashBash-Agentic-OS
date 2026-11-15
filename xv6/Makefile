@@ -22,6 +22,7 @@ OBJS = \
   $K/fs.o \
   $K/log.o \
   $K/shadow.o \
+  $K/spec.o \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
@@ -153,6 +154,9 @@ UPROGS=\
 	$U/_dorphan\
 	$U/_sync\
 	$U/_shadowd\
+	$U/_spectest\
+	$U/_xrun\
+	$U/_specbench\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

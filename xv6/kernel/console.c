@@ -62,6 +62,8 @@ struct {
 int
 consolewrite(int user_src, uint64 src, int n)
 {
+  if (myproc()->spec)
+    return spec_output(0, user_src, src, n);
   char buf[32]; // move batches from user space to uart.
   int i = 0;
 

@@ -20,6 +20,9 @@
 #include "fs.h"
 #include "buf.h"
 #include "file.h"
+#include "spec.h"
+
+#define NICACHE (NINODE + NSPEC * SPEC_INODES)
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 // there should be one superblock per disk device, but we run with
@@ -177,7 +180,7 @@ bfree(int dev, uint b)
 
 struct {
   struct spinlock lock;
-  struct inode inode[NINODE];
+  struct inode inode[NICACHE];
 } itable;
 
 void
@@ -186,12 +189,39 @@ iinit()
   int i = 0;
 
   initlock(&itable.lock, "itable");
-  for (i = 0; i < NINODE; i++) {
+  for (i = 0; i < NICACHE; i++) {
     initsleeplock(&itable.inode[i].lock, "inode");
   }
 }
 
 static struct inode *iget(uint dev, uint inum);
+
+int
+inode_referenced(uint dev, uint inum)
+{
+  int found = 0;
+  acquire(&itable.lock);
+  for (struct inode *ip = itable.inode; ip < itable.inode + NICACHE; ip++)
+    if (ip->ref && ip->dev == dev && ip->inum == inum &&
+        (ip->spec == 0 || ip->spec == specid()))
+      found = 1;
+  release(&itable.lock);
+  return found;
+}
+
+void
+iinvalidate(void)
+{
+  // Caller holds the filesystem publication gate; no inode operation is active.
+  for (struct inode *ip = itable.inode; ip < itable.inode + NICACHE; ip++)
+    if (ip->spec == 0) {
+      ip->valid = 0;
+      if (ip->ref) {
+        ilock(ip);
+        iunlock(ip);
+      }
+    }
+}
 
 // Allocate an inode on device dev.
 // Mark it as allocated by  giving it type type.
@@ -245,8 +275,8 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
-static struct inode *
-iget(uint dev, uint inum)
+struct inode *
+igetview(uint dev, uint inum, int view)
 {
   struct inode *ip, *empty;
 
@@ -254,13 +284,14 @@ iget(uint dev, uint inum)
 
   // Is the inode already in the table?
   empty = 0;
-  for (ip = &itable.inode[0]; ip < &itable.inode[NINODE]; ip++) {
-    if (ip->ref > 0 && ip->dev == dev && ip->inum == inum) {
+  for (ip = &itable.inode[0]; ip < &itable.inode[NICACHE]; ip++) {
+    if (ip->ref > 0 && ip->dev == dev && ip->inum == inum && ip->spec == view) {
       ip->ref++;
       release(&itable.lock);
       return ip;
     }
-    if (empty == 0 && ip->ref == 0) // Remember empty slot.
+    if (empty == 0 && ip->ref == 0 &&
+        ((view == 0) == (ip < &itable.inode[NINODE])))
       empty = ip;
   }
 
@@ -271,11 +302,18 @@ iget(uint dev, uint inum)
   ip = empty;
   ip->dev = dev;
   ip->inum = inum;
+  ip->spec = view;
   ip->ref = 1;
   ip->valid = 0;
   release(&itable.lock);
 
   return ip;
+}
+
+static struct inode *
+iget(uint dev, uint inum)
+{
+  return igetview(dev, inum, specid());
 }
 
 // Increment reference count for ip.
@@ -354,7 +392,14 @@ iput(struct inode *ip)
   // Last reference of an unlinked inode?  Capture dev/inum before ref--,
   // since once ref hits 0, ip may be recycled by a concurrent iget()
   // for a different inum.
-  int last = (ip->ref == 1 && ip->valid && ip->nlink == 0);
+  int last = (ip->ref == 1 && ip->valid && ip->nlink == 0 &&
+              (ip->spec == 0 || ip->spec == specid()));
+  // A private unlink must preserve data still referenced by committed handles.
+  if (last && ip->spec) {
+    for (struct inode *real = itable.inode; real < itable.inode + NINODE; real++)
+      if (real->spec == 0 && real->ref && real->dev == ip->dev && real->inum == ip->inum)
+        last = 0;
+  }
   uint dev = ip->dev, inum = ip->inum;
 
   if (last) {
@@ -696,7 +741,7 @@ namex(char *path, int nameiparent, char *name)
   if (*path == '/')
     ip = iget(ROOTDEV, ROOTINO);
   else
-    ip = idup(myproc()->cwd);
+    ip = iget(myproc()->cwd->dev, myproc()->cwd->inum);
 
   while ((path = skipelem(path, name)) != 0) {
     ilock(ip);

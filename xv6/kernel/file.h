@@ -17,6 +17,7 @@ struct file {
 struct inode {
   uint dev;              // Device number
   uint inum;             // Inode number
+  int spec;              // Private inode-cache identity, or committed view 0.
   int ref;               // Reference count
   struct sleeplock lock; // protects everything below here
   int valid;             // inode has been read from disk?

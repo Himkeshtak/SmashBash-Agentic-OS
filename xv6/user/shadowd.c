@@ -20,10 +20,15 @@ static int active, pending, expected, received, prepared;
 static char opcode;
 static uint seen[MAXENTRIES];
 static int entries, bytes;
+// Kernel mode admits the complete bounded transport before xbegin. Transport
+// ACKs acknowledge ingestion only; no speculative result crosses the barrier.
+static char batch[640 * 1024];
+static int kernelmode, preview, replaying, batchbytes, batchread;
 
 static void
 abort_tx(char *reason)
 {
+  if (kernelmode) xabort();
   printf("@SB1 ABORT %s\n", reason);
   exit(1);
 }
@@ -31,7 +36,7 @@ abort_tx(char *reason)
 static void
 ok(void)
 {
-  printf("@SB1 OK\n");
+  if (!replaying) printf("@SB1 OK\n");
 }
 
 static int
@@ -92,6 +97,12 @@ split(char **fields)
 static void
 readline(void)
 {
+  if (replaying) {
+    if (batchread >= batchbytes) abort_tx("batch-incomplete");
+    strcpy(line, batch + batchread);
+    batchread += strlen(line) + 1;
+    return;
+  }
   int length = 0;
   char c;
   for (;;) {
@@ -279,9 +290,26 @@ inspect(char *p, int depth)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
-  printf("@SB1 READY 1\n");
+  kernelmode = argc == 2 && (strcmp(argv[1], "kernel-commit") == 0 ||
+                            strcmp(argv[1], "kernel-preview") == 0);
+  preview = kernelmode && strcmp(argv[1], "kernel-preview") == 0;
+  if (argc != 1 && !kernelmode) exit(1);
+  printf("@SB1 READY %d\n", kernelmode ? 2 : 1);
+  if (kernelmode) {
+    for (;;) {
+      readline();
+      int n = strlen(line) + 1;
+      if (n > sizeof(batch) - batchbytes) abort_tx("batch-limit");
+      memmove(batch + batchbytes, line, n);
+      batchbytes += n;
+      if (strcmp(line, "F") == 0) break;
+      ok();
+    }
+    if (xbegin() < 0) abort_tx("kernel-begin");
+    replaying = 1;
+  }
   for (;;) {
     char *fields[8];
     readline();
@@ -342,8 +370,12 @@ main(void)
       inspect(root, 0);
       if (sync() < 0 || shadowcheck() < 0)
         abort_tx("kernel-integrity");
+      if (kernelmode && (preview ? xabort() : xcommit()) < 0)
+        abort_tx("kernel-finalize");
       prepared = 1;
       printf("@SB1 PREPARED %d %d %d\n", completed, entries, bytes);
+      if (kernelmode)
+        for (;;) pause(1000); // Remain quiescent until the bridge stops QEMU.
       // Do not return to the shell, which could accept more mutable commands.
     } else {
       abort_tx("state-or-frame");

@@ -44,3 +44,7 @@ entry("pause");
 entry("uptime");
 entry("sync");
 entry("shadowcheck");
+entry("xbegin");
+entry("xcommit");
+entry("xabort");
+entry("xstate");

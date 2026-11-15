@@ -1,5 +1,5 @@
-// Independent, read-only on-disk allocation check for a quiescent shadow VM.
-// This is not a process speculation syscall: isolation is the private VM disk.
+// Read-only allocation validation of the caller's kernel block view.
+// The filesystem publication gate keeps ordinary writers out during validation.
 #include "types.h"
 #include "riscv.h"
 #include "defs.h"
@@ -24,13 +24,14 @@ claim(uchar *seen, uint block, uint start)
 }
 
 static int
-check_inode(uchar *seen, struct dinode *ip, uint start)
+check_inode(uchar *seen, struct dinode *ip, uint start, uint ino)
 {
   uint count = (ip->size + BSIZE - 1) / BSIZE;
   if (ip->type == 0)
     return 0;
   if ((ip->type != T_DIR && ip->type != T_FILE && ip->type != T_DEVICE) ||
-      ip->nlink < 1 || ip->size > MAXFILE * BSIZE)
+      ip->nlink < 0 || (!ip->nlink && !inode_referenced(ROOTDEV, ino)) ||
+      ip->size > MAXFILE * BSIZE)
     return -1;
   if (ip->type == T_DEVICE && ip->size != 0)
     return -1;
@@ -65,11 +66,9 @@ check_inode(uchar *seen, struct dinode *ip, uint start)
   return 0;
 }
 
-uint64
-sys_shadowcheck(void)
+int
+shadow_validate(void)
 {
-  // shadowd is the only mutator in this dedicated VM. The parent shell waits.
-  // Never attach a live/shared disk to this VM.
   sys_sync();
   if (sb.magic != FSMAGIC || sb.size > PGSIZE * 8 || sb.nblocks >= sb.size ||
       sb.ninodes < 2 || sb.ninodes > 4096 || sb.logstart != 2 || sb.nlog < 2 ||
@@ -90,7 +89,7 @@ sys_shadowcheck(void)
     struct buf *bp = bread(ROOTDEV, IBLOCK(ino, sb));
     struct dinode inode = ((struct dinode *)bp->data)[ino % IPB];
     brelse(bp);
-    if (check_inode(seen, &inode, start) < 0)
+    if (check_inode(seen, &inode, start, ino) < 0)
       valid = 0;
   }
   for (uint b = 0; b < sb.size && valid; b += BPB) {
@@ -109,4 +108,10 @@ sys_shadowcheck(void)
   brelse(bp);
   kfree(seen);
   return valid ? 0 : -1;
+}
+
+uint64
+sys_shadowcheck(void)
+{
+  return shadow_validate();
 }
