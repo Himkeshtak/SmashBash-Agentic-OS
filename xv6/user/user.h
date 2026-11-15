@@ -25,7 +25,10 @@ char *sys_sbrk(int, int);
 int pause(int);
 int uptime(void);
 int sync(void);
-int shadowcheck(void);
+int xbegin(void);
+int xcommit(void);
+int xabort(void);
+
 
 // ulib.c
 int stat(const char *, struct stat *);

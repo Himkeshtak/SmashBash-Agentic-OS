@@ -54,7 +54,9 @@ bzero(int dev, int bno)
 {
   struct buf *bp;
 
-  bp = bread(dev, bno);
+  bp = bread_write(dev, bno);
+  if (!bp)
+    return;
   memset(bp->data, 0, BSIZE);
   log_write(bp);
   brelse(bp);
@@ -76,6 +78,10 @@ balloc(uint dev)
     for (bi = 0; bi < BPB && b + bi < sb.size; bi++) {
       m = 1 << (bi % 8);
       if ((bp->data[bi / 8] & m) == 0) { // Is block free?
+        brelse(bp);
+        bp = bread_write(dev, BBLOCK(b, sb));
+        if (!bp)
+          return 0; // Out of shadow blocks!
         bp->data[bi / 8] |= m;           // Mark block in use.
         log_write(bp);
         brelse(bp);
@@ -96,7 +102,9 @@ bfree(int dev, uint b)
   struct buf *bp;
   int bi, m;
 
-  bp = bread(dev, BBLOCK(b, sb));
+  bp = bread_write(dev, BBLOCK(b, sb));
+  if (!bp)
+    return;
   bi = b % BPB;
   m = 1 << (bi % 8);
   if ((bp->data[bi / 8] & m) == 0)
@@ -208,6 +216,11 @@ ialloc(uint dev, short type)
     bp = bread(dev, IBLOCK(inum, sb));
     dip = (struct dinode *)bp->data + inum % IPB;
     if (dip->type == 0) { // a free inode
+      brelse(bp);
+      bp = bread_write(dev, IBLOCK(inum, sb));
+      if (!bp)
+        return 0; // Out of shadow blocks!
+      dip = (struct dinode *)bp->data + inum % IPB;
       memset(dip, 0, sizeof(*dip));
       dip->type = type;
       log_write(bp); // mark it allocated on the disk
@@ -230,7 +243,9 @@ iupdate(struct inode *ip)
   struct buf *bp;
   struct dinode *dip;
 
-  bp = bread(ip->dev, IBLOCK(ip->inum, sb));
+  bp = bread_write(ip->dev, IBLOCK(ip->inum, sb));
+  if (!bp)
+    return;
   dip = (struct dinode *)bp->data + ip->inum % IPB;
   dip->type = ip->type;
   dip->major = ip->major;
@@ -445,6 +460,11 @@ bmap(struct inode *ip, uint bn)
     bp = bread(ip->dev, addr);
     a = (uint *)bp->data;
     if ((addr = a[bn]) == 0) {
+      brelse(bp);
+      bp = bread_write(ip->dev, ip->addrs[NDIRECT]);
+      if (!bp)
+        return 0;
+      a = (uint *)bp->data;
       addr = balloc(ip->dev);
       if (addr) {
         a[bn] = addr;
@@ -555,7 +575,9 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
     uint addr = bmap(ip, off / BSIZE);
     if (addr == 0)
       break;
-    bp = bread(ip->dev, addr);
+    bp = bread_write(ip->dev, addr);
+    if (!bp)
+      break; // Out of shadow blocks! Non-externalization error
     m = min(n - tot, BSIZE - off % BSIZE);
     if (either_copyin(bp->data + (off % BSIZE), user_src, src, m) == -1) {
       // Might have partially updated the block, so we need to log it.
@@ -575,7 +597,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
   // block to ip->addrs[].
   iupdate(ip);
 
-  return tot;
+  return (tot > 0 ? tot : (n == 0 ? 0 : -1));
 }
 
 // Directories

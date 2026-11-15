@@ -23,7 +23,7 @@ class QEMUConfig:
 
 
 @dataclass(frozen=True)
-class Prepared:
+class Prepared:#captures telemetry returned by guest after execution
     operations: int
     entries: int
     bytes: int

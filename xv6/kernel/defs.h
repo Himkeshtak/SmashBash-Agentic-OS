@@ -13,15 +13,23 @@ struct superblock;
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
+struct buf*     bread_write(uint, uint);
+int             is_shadow_buf(struct buf*);
 void            brelse(struct buf*);
 void            bwrite(struct buf*);
 void            bpin(struct buf*);
 void            bunpin(struct buf*);
+void            shadow_abort(int);
+int             shadow_commit(int);
+void            shadow_check_conflict(uint, uint);
 
 // console.c
 void            consoleinit(void);
 void            consoleintr(int);
 void            consputc(int);
+void            console_spec_init(void);
+void            console_spec_flush(int);
+void            console_spec_discard(int);
 
 // exec.c
 int             kexec(char*, char**);
@@ -72,6 +80,9 @@ int             pipealloc(struct file**, struct file**);
 void            pipeclose(struct pipe*, int);
 int             piperead(struct pipe*, uint64, int);
 int             pipewrite(struct pipe*, uint64, int);
+void            pipe_spec_init(void);
+void            pipe_spec_flush(int);
+void            pipe_spec_discard(int);
 
 // printk.c
 int             printk(char*, ...) __attribute__ ((format (printf, 1, 2)));
@@ -103,6 +114,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+void            proc_clear_spec(int);
 
 // swtch.S
 void            swtch(struct context*, struct context*);

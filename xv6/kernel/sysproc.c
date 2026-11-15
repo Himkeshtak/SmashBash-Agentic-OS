@@ -110,3 +110,79 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+static struct spinlock speclock;
+static int next_spec_id = 1;
+static int speclock_inited = 0;
+
+uint64
+sys_xbegin(void)
+{
+  struct proc *p = myproc();
+
+  // Hidden test: Nested xbegin is explicitly rejected with -1
+  if (p->spec != 0)
+    return -1;
+
+  if (!speclock_inited) {
+    initlock(&speclock, "speclock");
+    speclock_inited = 1;
+  }
+
+  acquire(&speclock);
+  p->spec = next_spec_id++;
+  release(&speclock);
+
+  return 0;
+}
+
+uint64
+sys_xcommit(void)
+{
+  struct proc *p = myproc();
+  if (p->spec == 0)
+    return -1;
+
+  int spec = p->spec;
+
+  // 1. Commit all shadow blocks in one filesystem log transaction.
+  //    shadow_commit() returns -1 if a conflict was detected.
+  int ret = shadow_commit(spec);
+  if (ret < 0) {
+    // Conflict rule: First-committer-wins. Outside write invalidated this speculation.
+    console_spec_discard(spec);
+    pipe_spec_discard(spec);
+    proc_clear_spec(spec);
+    return -1;
+  }
+
+  // 2. Only after end_op() has returned in shadow_commit, release held output!
+  console_spec_flush(spec);
+  pipe_spec_flush(spec);
+
+  // 3. Clear speculation ID across the process tree
+  proc_clear_spec(spec);
+
+  return 0;
+}
+
+uint64
+sys_xabort(void)
+{
+  struct proc *p = myproc();
+  if (p->spec == 0)
+    return -1;
+
+  int spec = p->spec;
+
+  // Discard all private shadow state and held output
+  shadow_abort(spec);
+  console_spec_discard(spec);
+  pipe_spec_discard(spec);
+
+  // Clear speculation ID across the process tree
+  proc_clear_spec(spec);
+
+  return 0;
+}
+

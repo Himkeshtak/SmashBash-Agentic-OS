@@ -19,10 +19,17 @@ struct pipe {
   int writeopen; // write fd is still open
 };
 
+static int pipe_spec_initialized = 0;
+
 int
 pipealloc(struct file **f0, struct file **f1)
 {
   struct pipe *pi;
+
+  if (!pipe_spec_initialized) {
+    pipe_spec_init();
+    pipe_spec_initialized = 1;
+  }
 
   pi = 0;
   *f0 = *f1 = 0;
@@ -73,11 +80,132 @@ pipeclose(struct pipe *pi, int writable)
     release(&pi->lock);
 }
 
+extern struct proc proc[NPROC];
+
+#define SPEC_PIPE_BUF_SIZE 2048
+
+struct spec_pipe {
+  int spec;
+  struct pipe *pi;
+  int len;
+  char buf[SPEC_PIPE_BUF_SIZE];
+};
+
+static struct {
+  struct spinlock lock;
+  struct spec_pipe pipes[NPROC];
+} spec_pipe_table;
+
+void
+pipe_spec_init(void)
+{
+  initlock(&spec_pipe_table.lock, "spec_pipe");
+  for (int i = 0; i < NPROC; i++) {
+    spec_pipe_table.pipes[i].spec = 0;
+    spec_pipe_table.pipes[i].pi = 0;
+    spec_pipe_table.pipes[i].len = 0;
+  }
+}
+
+// Check if any open reader of this pipe is outside writer_spec
+int
+pipe_has_outside_reader(struct pipe *pi, int writer_spec)
+{
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    if (p->state != UNUSED) {
+      for (int fd = 0; fd < NOFILE; fd++) {
+        if (p->ofile[fd] && p->ofile[fd]->type == FD_PIPE &&
+            p->ofile[fd]->pipe == pi && p->ofile[fd]->readable) {
+          if (p->spec != writer_spec) {
+            return 1;
+          }
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+void
+pipe_spec_flush(int spec)
+{
+  acquire(&spec_pipe_table.lock);
+  for (int idx = 0; idx < NPROC; idx++) {
+    if (spec_pipe_table.pipes[idx].spec == spec && spec_pipe_table.pipes[idx].pi) {
+      struct pipe *pi = spec_pipe_table.pipes[idx].pi;
+      int len = spec_pipe_table.pipes[idx].len;
+      acquire(&pi->lock);
+      for (int j = 0; j < len; j++) {
+        if (pi->readopen == 0)
+          break;
+        pi->data[pi->nwrite++ % PIPESIZE] = spec_pipe_table.pipes[idx].buf[j];
+      }
+      wakeup(&pi->nread);
+      release(&pi->lock);
+
+      spec_pipe_table.pipes[idx].spec = 0;
+      spec_pipe_table.pipes[idx].pi = 0;
+      spec_pipe_table.pipes[idx].len = 0;
+    }
+  }
+  release(&spec_pipe_table.lock);
+}
+
+void
+pipe_spec_discard(int spec)
+{
+  acquire(&spec_pipe_table.lock);
+  for (int idx = 0; idx < NPROC; idx++) {
+    if (spec_pipe_table.pipes[idx].spec == spec) {
+      spec_pipe_table.pipes[idx].spec = 0;
+      spec_pipe_table.pipes[idx].pi = 0;
+      spec_pipe_table.pipes[idx].len = 0;
+    }
+  }
+  release(&spec_pipe_table.lock);
+}
+
 int
 pipewrite(struct pipe *pi, uint64 addr, int n)
 {
   int i = 0;
   struct proc *pr = myproc();
+
+  // If writer is speculative and has an outside reader, buffer until commit
+  if (pr && pr->spec > 0 && pipe_has_outside_reader(pi, pr->spec)) {
+    acquire(&spec_pipe_table.lock);
+    struct spec_pipe *sp = 0;
+    for (int idx = 0; idx < NPROC; idx++) {
+      if (spec_pipe_table.pipes[idx].spec == pr->spec &&
+          spec_pipe_table.pipes[idx].pi == pi) {
+        sp = &spec_pipe_table.pipes[idx];
+        break;
+      }
+    }
+    if (!sp) {
+      for (int idx = 0; idx < NPROC; idx++) {
+        if (spec_pipe_table.pipes[idx].spec == 0) {
+          sp = &spec_pipe_table.pipes[idx];
+          sp->spec = pr->spec;
+          sp->pi = pi;
+          sp->len = 0;
+          break;
+        }
+      }
+    }
+    if (sp) {
+      for (int j = 0; j < n && sp->len < SPEC_PIPE_BUF_SIZE; j++) {
+        char ch;
+        if (copyin(pr->pagetable, pr->sz, &ch, addr + j, 1) == -1)
+          break;
+        sp->buf[sp->len++] = ch;
+        i++;
+      }
+    }
+    release(&spec_pipe_table.lock);
+    return i;
+  }
 
   acquire(&pi->lock);
   while (i < n) {
