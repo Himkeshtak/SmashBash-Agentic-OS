@@ -1,4 +1,4 @@
-name: Shadow transactions
+name: Kernel and image transactions
 on: [push, pull_request]
 permissions:
   contents: read
@@ -16,14 +16,21 @@ jobs:
       - run: python -m unittest discover -s tests -v
   xv6:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc bc
+      - run: sudo apt-get update && sudo apt-get install -y gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc gdb-multiarch bc
       - run: make -C xv6 -j2 kernel/kernel fs.img
       - run: python -m unittest discover -s tests -v
         env:
           SMASHBASH_QEMU_TESTS: '1'
+      - run: python -m tools.verify_kernel --regression --bench
+      - run: python -m tools.crash_kernel
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-evidence
+          path: data/kernel-evidence/

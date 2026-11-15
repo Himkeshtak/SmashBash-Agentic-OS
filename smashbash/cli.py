@@ -14,6 +14,7 @@ from pathlib import Path
 from .agent import add_arguments as add_agent_arguments, run_cli as run_agent_cli
 from .bridge import QEMUBridge, QEMUConfig
 from .coordinator import Coordinator
+from .kernel import KernelCoordinator
 from .filesystem import validate_tree
 from .image import Image
 from .model import TransactionError, load_json
@@ -65,6 +66,7 @@ def parser():
         if command == "init":
             cmd.add_argument("--template", type=Path, default=Path("xv6/fs.img"))
         if command == "run":
+            cmd.add_argument("--backend", choices=("kernel", "image"), default="kernel")
             cmd.add_argument("--request", type=Path, help="JSON file; defaults to stdin")
             cmd.add_argument("--principal", required=True, help="authenticated identity, never from the agent payload")
     return result
@@ -87,6 +89,8 @@ def main(argv=None):
             target = ImageTarget(args.image, args.state_dir)
             coordinator = Coordinator(target, lambda: Policy.load(args.policy), config)
             if args.command == "run":
+                if args.backend == "kernel":
+                    coordinator = KernelCoordinator(target, lambda: Policy.load(args.policy), config)
                 if args.request:
                     with args.request.open("rb") as stream:
                         data = stream.read(512 * 1024 + 1)

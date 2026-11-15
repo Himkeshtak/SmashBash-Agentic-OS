@@ -11,6 +11,7 @@ from typing import Callable
 
 from .bridge import QEMUConfig
 from .coordinator import Coordinator
+from .kernel import KernelCoordinator
 from .llm import LLMClient
 from .model import MAX_PATH, OPERATIONS, Request, TransactionError, load_json
 from .policy import Policy
@@ -116,6 +117,8 @@ def add_arguments(parser):
     parser.add_argument("--mode", choices=("preview", "commit"), default="preview")
     parser.add_argument("--plan-only", action="store_true", help="invoke the LLM and validate its plan without starting QEMU")
     parser.add_argument("--request-id", help="optional idempotency key for this task")
+    parser.add_argument("--backend", choices=("kernel", "image"), default="kernel",
+                        help="kernel transactions (default) or the older whole-image prototype")
 
 
 def run_cli(args):
@@ -126,7 +129,8 @@ def run_cli(args):
             raise TransactionError("Add your own OPENROUTER_API_KEY to the local .env file, or configure Ollama")
         coordinator = None
         if not args.plan_only:
-            coordinator = Coordinator(ImageTarget(settings.image, settings.state_dir),
+            service = KernelCoordinator if args.backend == "kernel" else Coordinator
+            coordinator = service(ImageTarget(settings.image, settings.state_dir),
                                       lambda: Policy.load(settings.policy),
                                       QEMUConfig(settings.kernel, settings.qemu))
         agent = Agent(llm, lambda: Policy.load(settings.policy), principal=settings.principal,

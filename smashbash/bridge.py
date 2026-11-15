@@ -111,7 +111,7 @@ class QEMUBridge:
         if self._response() != "@SB1 OK":
             raise TransactionError("unexpected guest acknowledgement")
 
-    def start(self):
+    def boot(self):
         executable = shutil.which(self.config.executable)
         if executable is None or not self.config.kernel.is_file():
             raise TransactionError("QEMU or the xv6 kernel is missing; run the documented build first")
@@ -132,6 +132,9 @@ class QEMUBridge:
         self.reader = threading.Thread(target=self._reader, daemon=True)
         self.reader.start()
         self._until(b"$ ")
+
+    def start(self):
+        self.boot()
         self._send("shadowd")  # Fixed trusted binary; no agent string is executed as a command.
         if self._response() != "@SB1 READY 1":
             raise TransactionError("unsupported guest protocol")
