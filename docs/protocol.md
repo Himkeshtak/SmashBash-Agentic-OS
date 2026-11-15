@@ -1,4 +1,8 @@
-# Agent JSON and xv6 SB1 protocol
+# Agent JSON and xv6 batch protocol
+
+The default kernel transport advertises `@SB1 READY 2`. It uses the frames below but acknowledges **ingestion only** before `F`. The guest stores at most 640 KiB of framed input, then calls `xbegin`, replays the complete batch without intermediate output, validates and calls `xcommit` or `xabort` before reporting `PREPARED`. That report represents an already completed kernel decision, not a host publication proposal. An explicit guest rejection aborts the kernel group. A lost final reply is `INDETERMINATE` and blocks automatic retry; reboot recovers the filesystem but cannot reconstruct request-ID receipts.
+
+The version-1 transport described below applies to `--backend image`: it executes frames as received against a private VM image, then relies on host publication. The request schema is shared. Kernel batches are further bounded by the actual attached log and kernel dirty/output budgets; a protocol-valid 64 KiB write can safely abort at that boundary.
 
 ## Agent request v1
 
@@ -38,9 +42,9 @@ An entire batch is admitted before execution. The host separately predicts each 
 
 ## Outcomes
 
-- `COMMITTED`: the validated shadow was published; current-run read observations may be included.
+- `COMMITTED`: the validated effects are durable; current-run read observations may be included.
 - `ABORTED`: no publication happened, or `preview` intentionally discarded a validated trial. A preview includes `validated: true` and changed path names, without file contents.
-- `INDETERMINATE`: an interrupted publication cannot be resolved from the recorded revisions. Further commits stop until an operator restores a known state.
+- `INDETERMINATE`: a lost kernel decision reply or interrupted legacy publication cannot be resolved safely. Further commits stop until an operator reconciles a known state.
 - `REJECTED`: parsing, configuration, locking, or an unrecoverable journal error prevented the transaction API from accepting the request.
 
 An identical request ID, principal, and digest returns the recorded receipt with `replayed: true`. A collision with different content or identity is rejected. Replay still checks current permissions. Journal replay does not return file contents. A preview is a terminal transaction: submit a new request ID to commit the plan afterward.

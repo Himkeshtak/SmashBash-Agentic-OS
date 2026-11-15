@@ -1,4 +1,6 @@
-# Safety and persistence contract
+# Safety and persistence contract — legacy image backend
+
+This describes `--backend image`. The default kernel backend has a different publication and ambiguous-reply contract; see [kernel guarantees and limits](architecture.md).
 
 ## Trust boundaries
 

@@ -1,0 +1,31 @@
+0x0000000000001000 in ?? ()
+Breakpoint 1 at 0x800007fe: file kernel/printk.c, line 139.
+[Switching to Thread 1.3]
+
+Thread 3 hit Breakpoint 1, panic (s=s@entry=0x80009048 "acquire") at kernel/printk.c:139
+warning: 139	kernel/printk.c: No such file or directory
+#0  panic (s=s@entry=0x80009048 "acquire") at kernel/printk.c:139
+#1  0x0000000080000bde in acquire (lk=lk@entry=0x80015af0 <proc+1536>) at kernel/spinlock.c:26
+#2  0x0000000080002046 in wakeup (chan=chan@entry=0x87d43a30) at kernel/proc.c:627
+#3  0x0000000080005e2c in pipereader (pi=0x87d43000, id=<optimized out>, delta=delta@entry=1) at kernel/pipe.c:79
+#4  0x0000000080001cb0 in kfork () at kernel/proc.c:296
+#5  0x0000000080002ab2 in sys_fork () at kernel/sysproc.c:33
+#6  0x00000000800029d2 in syscall () at kernel/syscall.c:159
+#7  0x0000000080002744 in usertrap () at kernel/trap.c:68
+#8  0x0000003ffffff09c in ?? ()
+  Id   Target Id                    Frame 
+  1    Thread 1.1 (CPU#0 [halted ]) s_sstatus (x=2) at kernel/riscv.h:67
+  2    Thread 1.2 (CPU#1 [halted ]) s_sstatus (x=2) at kernel/riscv.h:67
+* 3    Thread 1.3 (CPU#2 [running]) panic (s=s@entry=0x80009048 "acquire") at kernel/printk.c:139
+[Inferior 1 (process 1) detached]
+
+Guest console:
+
+xv6 kernel is booting
+
+hart 2 starting
+hart 1 starting
+init: starting sh
+$ spectest
+SPECTEST lifecycle PASS
+panic: acquire

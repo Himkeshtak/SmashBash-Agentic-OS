@@ -1,0 +1,52 @@
+
+xv6 kernel is booting
+
+hart 2 starting
+hart 1 starting
+init: starting sh
+$ specbench prepare
+CRASH BASELINE READY
+$ Reading symbols from /mnt/d/Smash Bash (Agentic OS)/xv6/kernel/kernel...
+(gdb) (gdb) (gdb) Remote debugging using 127.0.0.1:12351
+s_sstatus (x=2) at kernel/riscv.h:67
+warning: 67	kernel/riscv.h: No such file or directory
+(gdb) Breakpoint 1 at 0x80002f54: file kernel/bio.c, line 140.
+(gdb) Continuing.
+[Switching to Thread 1.2]
+
+Thread 2 hit Breakpoint 1, bwrite (b=b@entry=0x80028ef0 <bcache+47064>)
+    at kernel/bio.c:140
+warning: 140	kernel/bio.c: No such file or directory
+(gdb) #0  bwrite (b=b@entry=0x80028ef0 <bcache+47064>) at kernel/bio.c:140
+#1  0x0000000080004090 in install_trans (recovering=recovering@entry=0)
+    at kernel/log.c:81
+#2  0x0000000080004338 in commit () at kernel/log.c:218
+#3  end_op () at kernel/log.c:187
+#4  0x0000000080005714 in spec_commit () at kernel/spec.c:498
+#5  0x0000000080002ae8 in sys_xcommit () at kernel/sysproc.c:11
+#6  0x0000000080002a8c in syscall () at kernel/syscall.c:159
+#7  0x00000000800027fe in usertrap () at kernel/trap.c:68
+#8  0x0000003ffffff09c in ?? ()
+(gdb) STOP_FOR_CRASH
+
+Console before power loss:
+
+xv6 kernel is booting
+
+hart 1 starting
+hart 2 starting
+init: starting sh
+$ specbench commit
+
+Reboot:
+
+xv6 kernel is booting
+
+hart 2 starting
+hart 1 starting
+recovering tail 0 dst 84
+recovering tail 1 dst 96
+recovering tail 2 dst 1214
+recovering tail 3 dst 1215
+init: starting sh
+$ during-install: expected=(b'new-a', b'new-b'), actual=(b'new-a', b'new-b'), integrity=PASS

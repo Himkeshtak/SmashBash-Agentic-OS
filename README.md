@@ -1,219 +1,136 @@
 # SmashBash Agentic OS
 
-An agent-independent transaction layer for xv6. An agent submits structured filesystem operations. SmashBash checks permissions and policy, executes the entire batch on a private QEMU disk, obtains an xv6 validation decision, independently inspects the resulting filesystem, and either publishes the new disk atomically or discards the trial.
+**In-kernel externalization barriers for xv6 processes and their children.** Programs call `xbegin()`, execute ordinary filesystem operations in private kernel state, and request `xcommit()` or `xabort()`. The kernel isolates file data and metadata, and holds console and external pipe output until filesystem commit completes.
 
-**Implemented persistence target:** a dedicated xv6 filesystem image. It is the actual persistent block device attached to the OS, not a mock. Accepted changes survive subsequent QEMU boots. No live device is attached to a trial VM.
+The Python LLM agent is optional. Any agent can submit the same structured format. The default agent and JSON CLI now use **kernel transactions on the attached persistent xv6 disk**. The earlier whole-image prototype is available explicitly with `--backend image`.
 
-[Architecture and final validator criteria](docs/architecture.md) · [Agent protocol](docs/protocol.md) · [Security and recovery contract](docs/security.md) · [Request JSON Schema](schema/request.schema.json)
+[Kernel design](docs/architecture.md) · [Corrections and evidence](docs/corrections.md) · [Agent setup](docs/agent.md) · [Wire protocol](docs/protocol.md) · [JSON schema](schema/request.schema.json)
 
-## Architecture
-
-The complete implemented flow is shown below: the LLM-backed agent and other clients share the same validated OS protocol. Trials run on private xv6 disks, and publication requires both guest and host validation. Recovery resolves interrupted transactions from the journal.
+## Complete architecture
 
 ```mermaid
 flowchart TD
-    U["User task"] --> IV["Principal + intent precheck"]
-    I["Authenticated principal<br/>supplied by trusted integration"] --> IV
-    P["Trusted policy + optional scanners"] --> IV
-    CFG["Trusted runtime configuration<br/>local .env or environment"] --> LA
-    CFG --> TX
-    IV -->|reject| AB["ABORT / reject<br/>No live effects"]
-    IV --> LA["Agent.py / Agent class<br/>OpenRouter or local Ollama inference"]
-    LA -->|inference or proposal failure| AB
-    LA --> J["JSON request v1<br/>intent + typed operations"]
-    A["Any other agent / client"] --> J
-    I --> V1
-    P --> V1
-    J --> V1["Admission validator<br/>schema, permissions, scope,<br/>threat indicators, budgets"]
-    V1 -->|reject| AB
-    V1 -->|admit| TX["Coordinator<br/>lock target + baseline revision"]
-    D[("Dedicated persistent xv6 disk")] -->|copy only| SH[("Private shadow image")]
-    TX --> SH
-    SH --> EXPECT["Independent expected-state evaluation<br/>check batch semantics and quotas"]
-    EXPECT -->|invalid| AB
-    EXPECT --> B["QEMU bridge<br/>SB1 frames; no agent shell commands"]
-    B --> E["xv6 shadowd<br/>confined filesystem operations"]
-    E -->|operation failure or timeout| AB
-    E --> G["OS final validator<br/>tree quotas, types, links,<br/>operation completion"]
-    G --> K["Kernel shadowcheck syscall<br/>block ownership, bitmap,<br/>inode bounds, clean log"]
-    G -->|invalid| AB
-    K -->|invalid| AB
-    K -->|PREPARED| F["Stop VM + independent host inspection<br/>directory graph, exact effects,<br/>unchanged system namespace"]
-    F -->|invalid or unclean shutdown| AB
-    F --> C["Commit gate<br/>recheck policy + target revision<br/>optional application invariants"]
-    C -->|invalid / conflict / preview| AB
-    C -->|accepted| INT["Durable COMMITTING intent"]
-    INT --> PUB["ImageTarget<br/>fsync temporary image<br/>atomic replacement + directory fsync"]
-    PUB --> D
-    PUB --> OK["COMMITTED receipt<br/>release read observations"]
-    TX --> AUD[("Private transaction journal<br/>accepted request IDs and outcomes")]
-    AB --> AUD
-    INT --> AUD
-    OK --> AUD
-    AUD -. interrupted transaction .-> REC["Recovery<br/>resolve pending journal state"]
-    REC -->|interrupted before publication| RAB["Recovered ABORTED<br/>discard trial"]
-    REC -->|COMMITTING| REV{"Current target revision?"}
-    REV -->|proposed revision and durability confirmed| ROK["Recovered COMMITTED receipt"]
-    REV -->|original baseline| RAB
-    REV -->|unrelated revision or durability unconfirmed| UNC["INDETERMINATE<br/>block further publication"]
-    ROK --> AUD
-    RAB --> AUD
-    UNC --> AUD
+    U["User task"] --> IV["Trusted identity + intent precheck"]
+    CFG["Trusted policy / local environment<br/>identity, grants, paths, budgets"] --> IV
+    IV --> LLM["Optional Agent.py / Agent class<br/>OpenRouter or local Ollama inference"]
+    LLM --> JSON["Untrusted structured request v1<br/>typed operations + data"]
+    ANY["Any other AI agent / client"] --> JSON
+    JSON --> V1["Tool admission validator<br/>schema, permissions, scope, threat indicators,<br/>payload limits, optional scanners"]
+    CFG --> V1
+    V1 -->|reject| DENY["Reject before guest execution"]
+    V1 --> CO["KernelCoordinator<br/>predict effects + application checks<br/>exclusive ownership of attached disk"]
+    CO --> Q["QEMU KernelBridge<br/>bounded batch ingested before speculation"]
+    Q --> G["xv6 shadowd kernel mode<br/>trusted typed-operation executor"]
+    G --> B["xbegin syscall<br/>reserve RAM, assign group<br/>detach inode and file-offset views"]
+    APP["Ordinary xv6 programs<br/>xrun / direct syscall users"] --> B
+    B --> OP["Ordinary syscalls<br/>open, read, write, mkdir, link, unlink, exec"]
+    OP --> FORK["fork inherits group<br/>children share private effects"]
+    FORK --> OP
+    OP --> BC["Private kernel buffer views<br/>device + block + speculation<br/>lazy copies, read and dirty sets"]
+    BC --> META["Private inode cache + metadata blocks<br/>directories, bitmap, indirect blocks"]
+    OP --> IO["Kernel output barrier<br/>buffer console and external pipe writes<br/>allow same-group pipe traffic"]
+    OUT["Outside processes in the SAME xv6 VM"] --> REAL["Committed buffer and inode views"]
+    D[("Attached persistent xv6 filesystem disk")] --> REAL
+    REAL -. first private read .-> BC
+    OUT --> WRITE["Ordinary filesystem writes"]
+    WRITE --> CONFLICT["Outside writer wins<br/>invalidate groups that read its block"]
+    CONFLICT --> BAD["Failed group cannot publish"]
+    OP --> FINAL["Owner joins children, then xcommit<br/>kernel filesystem publication gate"]
+    META --> FINAL
+    IO --> FINAL
+    FINAL --> V2["Kernel final validator<br/>owner, membership, conflicts, resource bounds,<br/>inode and block ownership, bitmap, clean log"]
+    V2 -->|accept| WAL["One exclusive filesystem log transaction<br/>write payload, durable header,<br/>install home blocks, clear header"]
+    WAL --> D
+    WAL --> RELEASE["Refresh committed inode views<br/>rebase handles, release held output"]
+    RELEASE --> REPORT["Post-decision inspection + receipt<br/>read observations only after commit"]
+    V2 -->|reject| AB["xabort<br/>discard private blocks and output<br/>cancel descendants; reclaim after last member"]
+    BAD --> AB
+    OP -->|preview / explicit abort / owner exit| AB
+    D --> REC["Reboot redo-log recovery<br/>old filesystem or complete committed filesystem"]
+    Q -. lost final reply .-> UNC["INDETERMINATE receipt<br/>block automatic retry; reconcile recovered disk"]
 ```
 
-### Transaction lifecycle
+The target is the filesystem disk attached to xv6. This does not translate writes into Windows folders, SQL databases or arbitrary external devices; those targets require separate adapters and transaction semantics.
 
-```mermaid
-stateDiagram-v2
-    [*] --> RECEIVED
-    RECEIVED --> ADMITTED: permissions and policy pass
-    ADMITTED --> EXECUTING: stable private snapshot
-    EXECUTING --> PREPARED: both final validation boundaries pass
-    PREPARED --> COMMITTING: commit mode and durable intent
-    COMMITTING --> COMMITTED: atomic publication
-    COMMITTING --> COMMITTED: recovery confirms proposed revision and durability
-    RECEIVED --> ABORTED: denied
-    ADMITTED --> ABORTED: snapshot / semantic failure
-    EXECUTING --> ABORTED: guest / validation failure
-    PREPARED --> ABORTED: preview / conflict
-    COMMITTING --> ABORTED: recovery finds original revision
-    COMMITTING --> INDETERMINATE: unrelated revision or durability unconfirmed
-    COMMITTED --> [*]
-    ABORTED --> [*]
-    INDETERMINATE --> [*]
-```
+## Build and run ordinary programs
 
-The persistent target is an xv6 filesystem image. Host-filesystem and database adapters remain unimplemented. See [validation criteria](docs/architecture.md#validation-criteria) and the [security contract](docs/security.md) for the exact guarantees.
-
-## Build and run
-
-The host package uses Python 3.10+ and the standard library. Build and run QEMU on Linux or WSL. On Ubuntu:
+Use Linux or Ubuntu WSL with Python 3.10+:
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y build-essential perl gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc bc
-python3 -m smashbash build
+sudo apt-get install build-essential perl gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu qemu-system-misc gdb-multiarch bc
+make -C xv6 -j2 kernel/kernel fs.img
+make -C xv6 CPUS=3 qemu
+```
+
+At the xv6 shell:
+
+```text
+spectest
+xrun mkdir committed
+xrun -n mkdir discarded
+xrun echo visible-after-commit
+xrun -n echo discarded-output
+specbench
+```
+
+`xrun` joins its child and commits a successful command only if the kernel accepts the group. `-n` executes then aborts. A failed mutating syscall dooms its group even when a command exits zero. User programs can call the three syscalls directly; forked children inherit membership across `exec`.
+
+Shell redirections performed before `xrun` starts are outside its transaction. Put such actions inside the program or shell controlled by `xrun` when they need the barrier.
+
+## Submit a request or use the LLM agent
+
+Initialize a new dedicated image once; `init` refuses to overwrite an existing target:
+
+An old disk also contains old user binaries. Rebuilding only the kernel does not upgrade its `shadowd`. Use a newly initialized image for the kernel backend (choose a new filename when preserving an existing disk), or explicitly migrate the guest binaries and data first. The bridge rejects an old transport version before starting operations.
+
+```sh
 python3 -m smashbash init --image data/device.img --policy config/policy.example.json
 python3 -m smashbash run --image data/device.img --policy config/policy.example.json \
   --principal local-user --request examples/write-and-read.json
-python3 -m smashbash inspect --image data/device.img --policy config/policy.example.json
 ```
 
-Run commands from the repository root. `init` refuses to overwrite an existing image. The kernel and QEMU executable can be selected with `--kernel` and `--qemu`; there are no developer-specific executable paths. Building does not launch a VM against your persistent target.
+The default backend attaches this persistent disk directly, without transaction snapshots or host replacement. Input acknowledgements mean ingestion only. Execution starts after the complete batch arrives; preview calls `xabort` inside xv6.
 
-Each `request_id` is used once per target. Repeating an identical request returns its recorded outcome without executing it again. Use a new ID for a new transaction. To validate and discard a trial, set the JSON request's `mode` to `preview`.
-
-The sample policy grants `local-user` access to supported operations outside `secrets`, and grants `reader` read/stat access under `public`. A directory listing that overlaps a protected subtree is denied. Replace these example grants with your actual permissions before integrating an agent.
-
-## Use the real LLM agent
-
-`Agent.py` starts the LLM-backed `Agent` class in `smashbash/agent.py`. The actual provider HTTP invocation is in `smashbash/llm.py`. This is separate from the agent-neutral OS coordinator.
-
-The workspace has an ignored `.env` with a blank key. For a new clone, copy `.env.example` to `.env` if it does not already exist, then add your own OpenRouter API key locally:
-
-```dotenv
-LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=your-own-key-goes-here
-LLM_MODEL=openrouter/free
-LLM_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_FREE_ONLY=true
-```
-
-Create a key in your own [OpenRouter account](https://openrouter.ai/settings/keys). The [free router](https://openrouter.ai/collections/free-models) selects available free models; free usage is rate limited. Free-only mode rejects paid model IDs and the client supplies no paid fallback list. No third-party keys are bundled or obtained from public repositories.
+For the LLM client, copy `.env.example` to an ignored `.env` if needed, add your own provider key or configure a local Ollama model, then run:
 
 ```sh
-# Invoke the LLM and validate the returned plan, without starting a VM.
 python3 Agent.py --task "Write hello to note.txt" --plan-only
-
-# Run the proposed batch in QEMU, validate it, and discard the trial.
 python3 Agent.py --task "Write hello to note.txt" --mode preview
-
-# Run and publish only if the full OS transaction pipeline accepts it.
 python3 Agent.py --task "Write hello to note.txt" --mode commit
-
-# Equivalent package entrypoint; omit --task for an interactive prompt.
-python3 -m smashbash agent --task "Read note.txt" --mode commit
 ```
 
-Preview is the default. Run QEMU commands in Linux/WSL after initializing the image above. Planning alone also works on Windows. A valid LLM plan is still untrusted: permissions, paths, schemas, budgets, guest validators, and the host commit gate all remain in force. The LLM cannot choose identity, targets, policy, or commit mode.
+`Agent.py` starts `smashbash/agent.py`; `smashbash/llm.py` performs the provider HTTP request. The LLM proposes operations; trusted configuration selects identity, policy, target and mode. No key is bundled. Kernel verification requires no API key or LLM.
 
-For an installed local Ollama model, change `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_BASE_URL` to `ollama`, your model's installed name, and `http://127.0.0.1:11434/v1`. Local inference needs no API key and receives no OpenRouter authorization header. See [agent setup and limits](docs/agent.md).
+Typed operations are `fs.read`, `fs.list`, `fs.stat`, `fs.write`, `fs.append`, `fs.mkdir`, `fs.remove`, `fs.rename`. Ordinary programs can use the broader covered syscall surface through `xrun`.
 
-## Agent integration
+## Rules and limits
 
-Agents provide JSON through stdin, a request file, or the Python API. They never choose the trusted principal, target image, kernel, permissions, or validator plugins inside the request.
+| Rule | Behavior |
+|---|---|
+| Finalization | Only the begin owner finalizes; commit requires other members to have exited. |
+| Nesting | Nested begin and invalid finalization return `-1`. |
+| Conflicts | An ordinary writer invalidates active groups that read its changed block. |
+| Owner abort/death | Discard effects and cancel descendants, retaining their private identity until cleanup. |
+| Bounds | Four groups; 64 dirty blocks including metadata; 8192 output bytes; 64 output records; 32 tracked pipes per group. |
+| Backing RAM | About 2 MiB reserved per group for the default 2000-block disk; blocks copied lazily. |
+| Pipes | Internal traffic works before commit; external output is held; mixed inside/outside readers are rejected. |
+| Concurrency | A sleeping kernel gate serializes filesystem syscalls and publication, excluding blocking pipe/console I/O and wait. |
 
-```python
-from pathlib import Path
-from smashbash import Coordinator, ImageTarget, Policy, QEMUConfig
-from smashbash.model import load_json
+Lazy first reads are not a globally frozen snapshot at begin. Block conflicts can conservatively reject unrelated edits sharing metadata. A 64 KiB write exceeds the default dirty budget once metadata is included and must abort safely. Existing images retain their original log capacity; the kernel clamps budgets to that capacity.
 
-policy_path = Path("config/policy.example.json")
-service = Coordinator(
-    ImageTarget(Path("data/device.img"), Path(".smashbash")),
-    lambda: Policy.load(policy_path),
-    QEMUConfig(Path("xv6/kernel/kernel")),
-)
-request = load_json(Path("examples/write-and-read.json").read_bytes())
-result = service.run(request, principal="local-user")  # Identity comes from your authentication layer.
-```
+Abort does not rewind memory, consumed input or internal pipe reads. Filesystem durability precedes output release; a subsequent crash can lose output. Exactly-once output, arbitrary devices, network effects and a production security sandbox are outside the guarantee. Admission checks do not prove arbitrary requests harmless.
 
-For an LLM tool integration, expose the request schema as the tool input and bind `service` and the authenticated principal on the server. Supply the natural-language task in `intent`; the LLM's proposed typed operations are checked alongside that intent. The service itself does not depend on an LLM provider or API key.
-
-Supported operations are `fs.read`, `fs.list`, `fs.stat`, `fs.write`, `fs.append`, `fs.mkdir`, `fs.remove`, and `fs.rename`. Data is base64 encoded and never executed. Paths are relative to the configured guest root. Rename is for regular files with an absent destination; removal of a directory requires it to be empty.
-
-## Validation
-
-1. Admission checks the strict schema, trusted identity, operation grants, path scope, protected paths, configured intent indicators, and payload budgets. Trusted applications can attach malware scanners or other admission checks.
-2. xv6 enforces the bounded protocol, root confinement, file types, link restrictions, operation count, and file/tree quotas. Its final kernel check verifies allocation ownership, bitmap consistency, inode bounds, and a clean log.
-3. The host checks the entire image, directory graph and link counts, exact expected changes, unchanged system files, guest report, current policy, and the live baseline. A mismatch aborts publication.
-
-These checks enforce explicit safety rules. They do not determine whether every valid request is beneficial, or detect every possible malicious intent. See the security contract before extending the operation set.
-
-## Tests
+## Reproducible verification
 
 ```sh
-# Portable schema, policy, filesystem, image, concurrency, and recovery tests
 python3 -m unittest discover -s tests -v
-
-# Include real xv6/QEMU commit, abort, protocol, persistence, and corruption tests
 SMASHBASH_QEMU_TESTS=1 python3 -m unittest discover -s tests -v
+python3 -m tools.verify_kernel --regression --bench
+python3 -m tools.crash_kernel
 ```
 
-The second command requires the build above. Host tests also run on Windows. CI runs both host platforms and the real Linux/QEMU suite.
+Tests run ordinary concurrent processes in one VM on one and three CPUs. Crash tests stop real log code with GDB, kill QEMU before/after the commit header and during installation, then reboot and independently inspect both files and integrity. Benchmarks include safe overflow aborts and report raw guest ticks; zero ticks means below clock resolution. See [evidence and limits](docs/corrections.md).
 
-## Persistence and recovery
+A lost final reply is `INDETERMINATE` and blocks automatic retry until the recovered disk and receipt are reconciled. The redo log recovers filesystem state; it is not a durable request-ID ledger. Keep exclusive disk ownership and use one trusted state directory for all writers.
 
-The service owns the image exclusively. Keep the same trusted `--state-dir` for every writer to that image. Do not attach it to a separate running VM or edit it outside the service. The service locks writers, captures a SHA-256 baseline, and rechecks it immediately before replacing the disk. An uncooperative writer cannot be made safe by a checksum alone.
-
-The journal records validation states, request/policy digests, principal, revisions, and outcomes. File contents and raw intent text are not recorded there. Interrupted publication is resolved by comparing the target with its before/after revisions:
-
-```sh
-python3 -m smashbash recover --image data/device.img --policy config/policy.example.json
-```
-
-An ambiguous outcome becomes `INDETERMINATE` and blocks further commits; recovery never restores an old snapshot over someone else's changes. Read observations are released only after successful publication and are not replayed from the journal.
-
-## Extending the system
-
-- Register an agent by binding its authenticated principal to a policy grant; no xv6 changes are needed.
-- Add trusted `AdmissionCheck` and `FinalCheck` implementations through `Coordinator`. `ContentHashDenylist` demonstrates a signature-based threat check.
-- New executable operations require matching schema, expected-state evaluation, guest implementation, admission rules, and tests. Unknown operations always fail closed.
-- `StorageTarget` defines the publication adapter contract. The included `ImageTarget` supports a dedicated xv6 disk. Host directories, raw devices, SQL databases, network calls, and cross-target transactions are not implemented. A database adapter must translate supported effects and use its database's native transaction and concurrency mechanisms; copying database files is not a valid adapter.
-
-This implementation isolates whole trial VMs. It does not implement the earlier per-process `xbegin/xcommit/xabort` proposal in `problem understanding.md`, arbitrary shell command rollback, or rollback of external network effects.
-
-## Repository layout
-
-| Path | Responsibility |
-| --- | --- |
-| `smashbash/` | Public contract, policy, coordinator, QEMU bridge, image verifier, storage adapter |
-| `xv6/user/shadowd.c` | Agent-neutral SB1 execution and final tree validator |
-| `xv6/kernel/shadow.c` | Read-only kernel allocation/integrity validator |
-| `config/`, `schema/`, `examples/` | Trusted policy example and agent-facing protocol |
-| `tests/` | Portable checks, fault injection, and opt-in real VM integration |
-| `agent/` | Compatibility entrypoint and imports; no mock dispatcher |
-| `Agent.py`, `smashbash/agent.py`, `smashbash/llm.py` | Real task-to-operations LLM agent and provider client |
-| `.env.example` | Blank, shareable configuration; actual `.env` is ignored |
-
-The xv6 code retains its upstream license in `xv6/LICENSE`.
+The optional [legacy image backend](docs/legacy-image-architecture.md) has a separate publication/recovery contract. Select it with `--backend image`; do not mix backends on an unresolved target.

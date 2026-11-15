@@ -1,0 +1,45 @@
+
+xv6 kernel is booting
+
+hart 2 starting
+hart 1 starting
+init: starting sh
+$ specbench prepare
+CRASH BASELINE READY
+$ Reading symbols from /mnt/d/Smash Bash (Agentic OS)/xv6/kernel/kernel...
+(gdb) (gdb) (gdb) Remote debugging using 127.0.0.1:12351
+s_sstatus (x=2) at kernel/riscv.h:67
+warning: 67	kernel/riscv.h: No such file or directory
+(gdb) Breakpoint 1 at 0x80003f90: file kernel/log.c, line 112.
+(gdb) Continuing.
+[Switching to Thread 1.2]
+
+Thread 2 hit Breakpoint 1, write_head () at kernel/log.c:112
+warning: 112	kernel/log.c: No such file or directory
+(gdb) #0  write_head () at kernel/log.c:112
+#1  0x0000000080004332 in commit () at kernel/log.c:217
+#2  end_op () at kernel/log.c:187
+#3  0x0000000080005714 in spec_commit () at kernel/spec.c:498
+#4  0x0000000080002ae8 in sys_xcommit () at kernel/sysproc.c:11
+#5  0x0000000080002a8c in syscall () at kernel/syscall.c:159
+#6  0x00000000800027fe in usertrap () at kernel/trap.c:68
+#7  0x0000003ffffff09c in ?? ()
+(gdb) STOP_FOR_CRASH
+
+Console before power loss:
+
+xv6 kernel is booting
+
+hart 1 starting
+hart 2 starting
+init: starting sh
+$ specbench commit
+
+Reboot:
+
+xv6 kernel is booting
+
+hart 2 starting
+hart 1 starting
+init: starting sh
+$ before-header: expected=(b'old-a', b'old-b'), actual=(b'old-a', b'old-b'), integrity=PASS

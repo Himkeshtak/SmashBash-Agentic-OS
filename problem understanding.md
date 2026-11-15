@@ -1,6 +1,6 @@
 # Problem Understanding: Smash Bash
 
-> Historical process-level proposal. The implemented agent-independent whole-VM transaction design is documented in [docs/architecture.md](docs/architecture.md). The `xbegin/xcommit/xabort` interfaces below remain a proposal and are not implemented by this repository.
+> Original requirements and design exploration. The kernel now implements `xbegin/xcommit/xabort`; see [the implemented design](docs/architecture.md) and [corrections and evidence](docs/corrections.md). Proposals and schedules below remain the original requirement record.
 
 ## 1. What are we building?
 

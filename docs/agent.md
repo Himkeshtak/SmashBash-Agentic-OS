@@ -9,14 +9,16 @@ flowchart LR
     A --> L["OpenRouter free model<br/>or local Ollama model"]
     L --> P["Untrusted JSON operation proposal"]
     P --> V["Strict parsing and permission validation"]
-    V --> C["Coordinator.run"]
-    C --> Q["Private QEMU / xv6 trial"]
-    Q --> F["Guest and host final validators"]
-    F -->|accepted commit mode| D["Persistent image publication"]
-    F -->|failure or preview| X["Discard shadow"]
+    V --> C["KernelCoordinator.run"]
+    C --> Q["QEMU to xv6 xbegin / private kernel views"]
+    Q --> F["Guest policy + kernel final validators"]
+    F -->|accepted commit mode| D["xcommit: redo log on attached disk"]
+    F -->|failure or preview| X["xabort: discard private kernel state"]
 ```
 
 ## Files and invocation
+
+The default CLI backend is `kernel`. It uses the disk directly and performs no transaction image cloning or host replacement. `--backend image` explicitly selects the older prototype. Programmatic users select `KernelCoordinator` from `smashbash`; the older `Coordinator` class remains for compatibility. Unresolved kernel receipts block automatic retries and need manual reconciliation against the recovered filesystem. Host application final checks run before execution on predicted effects; inspection after the kernel decision cannot undo a committed operation.
 
 - `Agent.py`: convenient visible entrypoint.
 - `smashbash/agent.py`: the `Agent` class, inference call, proposal validation, OS handoff, and CLI.
@@ -76,6 +78,6 @@ The agent sends the task, allowed operation contract, path scopes, and budgets t
 
 Intent and principal checks run before inference; operation validation runs after inference and again in the coordinator. Organization-specific admission/final hooks still run in the coordinator. The LLM never decides whether a trial is safe to publish.
 
-Preview runs the real trial and validators, then discards its shadow; read contents are not returned from preview trials. Commit mode is required to publish or obtain committed read observations. `--plan-only` invokes the model and validates its proposal without starting QEMU or requiring a device image. An interactive session treats each task as a separate transaction and does not silently send previous file observations back to the model.
+Preview runs the real trial and validators, then calls kernel abort (or discards the image in legacy mode); read contents are not returned from preview trials. Commit mode is required to publish or obtain committed read observations. `--plan-only` invokes the model and validates its proposal without starting QEMU or requiring a device image. An interactive session treats each task as a separate transaction and does not silently send previous file observations back to the model.
 
 Provider authentication/rate-limit failures, redirects, oversized responses, timeouts, truncated output, and unexpected tool calls stop the agent. Keys and provider error bodies are not logged. Automated tests cover the HTTP contract with test responses, plus an inference-double-to-real-QEMU integration test; a live external model test requires a user-supplied key or installed local model.

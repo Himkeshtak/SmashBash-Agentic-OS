@@ -1,0 +1,17 @@
+
+xv6 kernel is booting
+
+init: starting sh
+$ spectest
+SPECTEST lifecycle PASS
+SPECTEST isolation PASS
+SPECTEST namespace PASS
+SPECTEST inheritance PASS
+CONSOLE_COMMITTED_ONCE
+SPECTEST outputs PASS
+SPECTEST conflict PASS
+SPECTEST limits PASS
+SPECTEST descriptors PASS
+SPECTEST members PASS
+SPECTEST ALL PASS
+$ 
