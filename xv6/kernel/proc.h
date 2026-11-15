@@ -101,4 +101,5 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int spec;                    // Speculation session ID (0 = normal, >0 = speculative)
 };

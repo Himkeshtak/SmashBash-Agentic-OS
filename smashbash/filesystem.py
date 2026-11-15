@@ -39,11 +39,12 @@ def validate_tree(tree: dict[str, Node], policy: Policy) -> None:
     if len(tree) > policy.max_entries or total > policy.max_total_bytes:
         raise TransactionError("final filesystem resource quota exceeded")
 
-
+#we'll move through each operation in request and modify the simulated tree and
+#track the result in observations/
 def evaluate(before: dict[str, Node], request: Request, policy: Policy):
     """Predict every allowed effect without executing agent-supplied code."""
-    validate_tree(before, policy)
-    tree, observations = dict(before), []
+    validate_tree(before, policy) #validate the starting state with validate_tree
+    tree, observations = dict(before), [] # makes a local copy
     for op in request.operations:
         node = tree.get(op.path)
         parent = op.path.rpartition("/")[0] or "."

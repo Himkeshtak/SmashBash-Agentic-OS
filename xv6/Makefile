@@ -21,7 +21,6 @@ OBJS = \
   $K/bio.o \
   $K/fs.o \
   $K/log.o \
-  $K/shadow.o \
   $K/sleeplock.o \
   $K/file.o \
   $K/pipe.o \
@@ -37,16 +36,18 @@ OBJS = \
 
 # Try to infer the correct TOOLPREFIX if not set
 ifndef TOOLPREFIX
-TOOLPREFIX := $(shell if riscv64-unknown-elf-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+TOOLPREFIX := $(shell if riscv64-unknown-elf-objdump -i 2>&1 | grep 'elf64-.*riscv' >/dev/null 2>&1; \
 	then echo 'riscv64-unknown-elf-'; \
-	elif riscv64-elf-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+	elif riscv64-elf-objdump -i 2>&1 | grep 'elf64-.*riscv' >/dev/null 2>&1; \
 	then echo 'riscv64-elf-'; \
-	elif riscv64-none-elf-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+	elif riscv64-none-elf-objdump -i 2>&1 | grep 'elf64-.*riscv' >/dev/null 2>&1; \
 	then echo 'riscv64-none-elf-'; \
-	elif riscv64-linux-gnu-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+	elif riscv64-linux-gnu-objdump -i 2>&1 | grep 'elf64-.*riscv' >/dev/null 2>&1; \
 	then echo 'riscv64-linux-gnu-'; \
-	elif riscv64-unknown-linux-gnu-objdump -i 2>&1 | grep 'elf64-big' >/dev/null 2>&1; \
+	elif riscv64-unknown-linux-gnu-objdump -i 2>&1 | grep 'elf64-.*riscv' >/dev/null 2>&1; \
 	then echo 'riscv64-unknown-linux-gnu-'; \
+	elif which riscv64-linux-gnu-gcc >/dev/null 2>&1; \
+	then echo 'riscv64-linux-gnu-'; \
 	else echo "***" 1>&2; \
 	echo "*** Error: Couldn't find a riscv64 version of GCC/binutils." 1>&2; \
 	echo "*** To turn off this error, run 'gmake TOOLPREFIX= ...'." 1>&2; \
@@ -152,7 +153,10 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_sync\
-	$U/_shadowd\
+	$U/_spectest\
+	$U/_conflicttest\
+	$U/_hiddentest\
+	$U/_benchspec\
 
 fs.img: mkfs/mkfs README $(UPROGS)
 	mkfs/mkfs fs.img README $(UPROGS)

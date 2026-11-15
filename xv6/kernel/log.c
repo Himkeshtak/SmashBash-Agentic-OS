@@ -225,6 +225,11 @@ log_write(struct buf *b)
 {
   int i;
 
+  if (is_shadow_buf(b)) {
+    // Private speculative shadow buffer: do not stage into on-disk log
+    return;
+  }
+
   acquire(&log.lock);
   if (log.lh.n >= LOGBLOCKS)
     panic("too big a transaction");

@@ -55,6 +55,60 @@ struct {
   uint e; // Edit index
 } cons;
 
+#define SPEC_CONSOLE_BUF_SIZE 4096
+
+struct spec_console {
+  int spec;
+  int len;
+  char buf[SPEC_CONSOLE_BUF_SIZE];
+};
+
+static struct {
+  struct spinlock lock;
+  struct spec_console cons[NPROC];
+} spec_console_table;
+
+void
+console_spec_init(void)
+{
+  initlock(&spec_console_table.lock, "spec_console");
+  for (int i = 0; i < NPROC; i++) {
+    spec_console_table.cons[i].spec = 0;
+    spec_console_table.cons[i].len = 0;
+  }
+}
+
+void
+console_spec_flush(int spec)
+{
+  acquire(&spec_console_table.lock);
+  for (int i = 0; i < NPROC; i++) {
+    if (spec_console_table.cons[i].spec == spec) {
+      for (int j = 0; j < spec_console_table.cons[i].len; j++) {
+        consputc(spec_console_table.cons[i].buf[j]);
+      }
+      spec_console_table.cons[i].spec = 0;
+      spec_console_table.cons[i].len = 0;
+      break;
+    }
+  }
+  release(&spec_console_table.lock);
+}
+
+void
+console_spec_discard(int spec)
+{
+  acquire(&spec_console_table.lock);
+  for (int i = 0; i < NPROC; i++) {
+    if (spec_console_table.cons[i].spec == spec) {
+      spec_console_table.cons[i].spec = 0;
+      spec_console_table.cons[i].len = 0;
+      break;
+    }
+  }
+  release(&spec_console_table.lock);
+}
+
 //
 // user write() system calls to the console go here.
 // uses sleep() and UART interrupts.
@@ -62,6 +116,38 @@ struct {
 int
 consolewrite(int user_src, uint64 src, int n)
 {
+  struct proc *p = myproc();
+  if (p && p->spec > 0) {
+    acquire(&spec_console_table.lock);
+    struct spec_console *sc = 0;
+    for (int i = 0; i < NPROC; i++) {
+      if (spec_console_table.cons[i].spec == p->spec) {
+        sc = &spec_console_table.cons[i];
+        break;
+      }
+    }
+    if (!sc) {
+      for (int i = 0; i < NPROC; i++) {
+        if (spec_console_table.cons[i].spec == 0) {
+          sc = &spec_console_table.cons[i];
+          sc->spec = p->spec;
+          sc->len = 0;
+          break;
+        }
+      }
+    }
+    if (sc) {
+      char c;
+      for (int i = 0; i < n && sc->len < SPEC_CONSOLE_BUF_SIZE; i++) {
+        if (either_copyin(&c, user_src, src + i, 1) == -1)
+          break;
+        sc->buf[sc->len++] = c;
+      }
+    }
+    release(&spec_console_table.lock);
+    return n;
+  }
+
   char buf[32]; // move batches from user space to uart.
   int i = 0;
 
@@ -193,6 +279,7 @@ void
 consoleinit(void)
 {
   initlock(&cons.lock, "cons");
+  console_spec_init();
 
   uartinit();
 

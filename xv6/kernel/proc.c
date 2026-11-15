@@ -145,6 +145,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  p->spec = 0;
 
   return p;
 }
@@ -167,6 +168,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->spec = 0;
   p->state = UNUSED;
 }
 
@@ -288,6 +290,7 @@ kfork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+  np->spec = p->spec;
 
   pid = np->pid;
 
@@ -701,3 +704,18 @@ procdump(void)
     printk("\n");
   }
 }
+
+// Clear speculation id across all processes that share it
+void
+proc_clear_spec(int spec)
+{
+  struct proc *p;
+  for (p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->spec == spec) {
+      p->spec = 0;
+    }
+    release(&p->lock);
+  }
+}
+
